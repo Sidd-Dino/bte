@@ -1,0 +1,2 @@
+# BTE
+Bash Text Editor
