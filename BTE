@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+#  ______     ______   ______    
+# /\  == \   /\__  _\ /\  ___\   
+# \ \  __<   \/_/\ \/ \ \  __\   
+#  \ \_____\    \ \_\  \ \_____\ 
+#   \/_____/     \/_/   \/_____/ 
+#                                
+# Bash Text Editor
+# cos.... Why not?
+
+
+# begin code kanging from fff( https://github.com/dylanaraps/fff )
+#------------------------------------------------------------------
+
+setup_terminal() {
+    # Setup the terminal for the TUI.
+    # '\e[?1049h': Use alternative screen buffer.
+    # '\e[?7l':    Disable line wrapping.
+    # '\e[?25l':   Hide the cursor.
+    # '\e[2J':     Clear the screen.
+    # '\e[1;Nr':   Limit scrolling to scrolling area.
+    #              Also sets cursor to (0,0).
+    printf '\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr' "$max_lines"
+
+    # Hide echoing of user input
+    stty -echo
+}
+
+reset_terminal() {
+    # Reset the terminal to a useable state (undo all changes).
+    # '\e[?7h':   Re-enable line wrapping.
+    # '\e[?25h':  Unhide the cursor.
+    # '\e[2J':    Clear the terminal.
+    # '\e[;r':    Set the scroll region to its default value.
+    #             Also sets cursor to (0,0).
+    # '\e[?1049l: Restore main screen buffer.
+    printf '\e[?7h\e[?25h\e[2J\e[;r\e[?1049l'
+
+    # Show user input.
+    stty echo
+}
+
+clear_screen() {
+    # Only clear the scrolling window (dir item list).
+    # '\e[%sH':    Move cursor to bottom of scroll area.
+    # '\e[9999C':  Move cursor to right edge of the terminal.
+    # '\e[1J':     Clear screen to top left corner (from cursor up).
+    # '\e[2J':     Clear screen fully (if using tmux) (fixes clear issues).
+    # '\e[1;%sr':  Clearing the screen resets the scroll region(?). Re-set it.
+    #              Also sets cursor to (0,0).
+    printf '\e[%sH\e[9999C\e[1J%b\e[1;%sr' \
+           "$((LINES-2))" "${TMUX:+\e[2J}" "$max_lines"
+}
+
+get_term_size() {
+    # Get terminal size ('stty' is POSIX and always available).
+    # This can't be done reliably across all bash versions in pure bash.
+    read -r LINES COLUMNS < <(stty size)
+
+    # Max list items that fit in the scroll area.
+    ((max_lines=LINES-2))
+}
+
+# end of kanging
+#------------------------------------------------------------------
+
+read_file() {
+
+    while read -r line; do
+        file_data+=("$line")
+    done < "$file"
+
+
+    # setting up variables for position within file
+    x=0
+    y=0
+}
+
+redraw() {
+
+    [[ $1 == full ]] && {
+        read_file
+        scroll=0
+    }
+
+
+    
+
+}
+
+key() {
+    # Handle special key presses.
+    [[ $1 == $'\e' ]] && {
+        read "${read_flags[@]}" -rsn 2
+
+        # Handle a normal escape key press.
+        [[ ${1}${REPLY} == $'\e\e['* ]] &&
+            read "${read_flags[@]}" -rsn 1 _
+
+        local special_key=${1}${REPLY}
+    }
+
+    case ${special_key:-$1} in
+
+        ${SCROLL_RIGHT1:=$'\e[C'}|\
+        ${SCROLL_RIGHT2:=$'\eOC'})
+             
+        ;;
+
+        ${SCROLL_LEFT1:=$'\e[D'}|\
+        ${SCROLL_LEFT2:=$'\eOD'})
+            
+        ;;
+
+        ${SCROLL_DOWN2:=$'\e[B'}|\
+        ${SCROLL_DOWN3:=$'\eOB'})
+            
+        ;;
+
+        ${SCROLL_UP2:=$'\e[A'}|\
+        ${SCROLL_UP3:=$'\eOA'})
+            
+        ;;
+
+        q)
+            exit
+        ;;
+        
+    esac
+
+}
+
+get_file() {
+
+    local link_path
+
+    [[ ! -a "$*" ]] && printf "%s\n" "[ERR] File $* does not exist" && exit
+
+    [[ ! -r $* ]] && printf "%s\n" "[ERR] File $* can't be read" && exit
+
+    [[ -d $* ]] && printf "%s\n" "[ERR] File $* is a directory" && exit
+
+    [[ -h $* ]] && {
+        link_path=$( readlink -f "$*" )
+        get_file "${link_path// /\\ }"
+        return
+    }
+
+    file=$( readlink -f "$*" )
+}
+
+
+main() {
+    
+
+    [[ $1 == -v ]] && {
+        printf '%s\n' "BTE 0.1"
+        exit
+    }
+
+    # Check to see of a file name has been passsed
+    if [[ ! -z $* ]]; then
+        get_file "$*"
+    fi
+
+    #! debug statements
+    echo "$0 $* $file" >> test
+
+    # bash 5 and some versions of bash 4 don't allow SIGWINCH to interrupt
+    # a 'read' command and instead wait for it to complete. In this case it
+    # causes the window to not redraw on resize until the user has pressed
+    # a key (causing the read to finish). This sets a read timeout on the
+    # affected versions of bash.
+    # NOTE: This shouldn't affect idle performance as the loop doesn't do
+    # anything until a key is pressed.
+    # SEE: https://github.com/dylanaraps/fff/issues/48
+    ((BASH_VERSINFO[0] > 3)) &&
+        read_flags=(-t 0.05)
+    
+    
+    # Trap the exit signal (we need to reset the terminal to a useable state.)
+    trap 'reset_terminal' EXIT
+
+    # Trap the window resize signal (handle window resize events).
+    trap 'get_term_size; redraw' WINCH
+
+    #get_os
+    get_term_size
+    setup_terminal
+    redraw full
+
+    # Vintage infinite loop.
+    for ((;;)); {
+        read "${read_flags[@]}" -srn 1 && key "$REPLY"
+        
+        # Exit if there is no longer a terminal attached.
+        [[ -t 1 ]] || exit 1
+    }
+}
+
+main "$@"
