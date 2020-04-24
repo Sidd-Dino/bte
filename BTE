@@ -6,7 +6,7 @@
 #   \/_____/     \/_/   \/_____/ 
 #                                
 # Bash Text Editor
-# cos.... Why not?
+# cos.... Why the fuck not?
 
 
 # begin code kanging from fff( https://github.com/dylanaraps/fff )
@@ -20,7 +20,7 @@ setup_terminal() {
     # '\e[2J':     Clear the screen.
     # '\e[1;Nr':   Limit scrolling to scrolling area.
     #              Also sets cursor to (0,0).
-    printf '\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr' "$max_lines"
+    printf '\e[?1049h\e[?7l\e[2J\e[1;%sr' "$max_lines"
 
     # Hide echoing of user input
     stty -echo
@@ -58,34 +58,182 @@ get_term_size() {
     read -r LINES COLUMNS < <(stty size)
 
     # Max list items that fit in the scroll area.
-    ((max_lines=LINES-2))
+    ((max_lines=LINES-3))
 }
 
 # end of kanging
 #------------------------------------------------------------------
 
-read_file() {
-
-    while read -r line; do
-        file_data+=("$line")
-    done < "$file"
-
-
+init_vars() {
     # setting up variables for position within file
     x=0
     y=0
+    scroll_x=1
+    scroll_y=1
+
+    curr_x=0    
+
+    y_start=0
+    y_end=$max_lines
+}
+
+status_line() {
+    
+    printf "\e7\e[%sH\e[30;42m%*s\r%s%s%s\e[m\e8"\
+            "$((LINES-1))" \
+            "$COLUMNS" "" \
+            "$((y+1))/$total_lines "\
+            "[scrollx/scrolly ($scroll_x/$scroll_y)] "\
+            "[x/y $x/$y] [max_lines $max_lines] [curr_x $curr_x]"
+
+}
+
+draw_line() {
+    local curr=$y
+
+    [[ -n $1 ]] && {
+        curr=$*
+    }
+
+    printf '\e[2K\r'
+
+    if (( ${#file_data[curr]} < COLUMNS-2 )); then
+        printf "%s" "${file_data[curr]}"
+    elif (( curr != y || x < (COLUMNS-2) )); then
+            printf "%s\e[30;41m%s\e[m" \
+                    "${file_data[curr]:0:$((COLUMNS-1))}"\
+                    ">"
+    else
+        local p=$(( (x-COLUMNS-2) / (COLUMNS-5) ))
+        x_start=$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))
+        x_end=$(( ( (p+1)*(COLUMNS-5) ) + (COLUMNS-2) ))
+
+        if (( ${#file_data[curr]} < x_end )); then
+            printf "\e[30;41m%s\e[m%s" \
+                    "<" \
+                    "${file_data[curr]:$((x_start-2)):$x_end}"
+
+        else
+            printf "\e[30;41m%s\e[m%s\e[30;41m%s\e[m" \
+                    "<" \
+                    "${file_data[curr]:$((x_start-2)):$((x_end+1))}" \
+                    ">"                 
+        fi
+    fi
+}
+
+draw_page() { 
+    for ((i=y_start;i<y_end;i++)); do
+            draw_line "$i"     
+            (( i+1 < y_end )) && printf "\n"
+    done
+}
+
+sync_cursor() {
+    local curr=$y
+
+    if (( curr_x > ${#file_data[y]} )); then
+        x=$((${#file_data[y]}-1))
+    else
+        x=$curr_x
+    fi
+
+    if (( x < (COLUMNS-2) )); then
+        scroll_x=$((x+1))
+    else
+        local p=$(( (x-COLUMNS-2) / (COLUMNS-5) ))
+        x_start=$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))
+        x_end=$(( ( (p+1)*(COLUMNS-5) ) + (COLUMNS-2) ))
+
+        scroll_x=$(( x-x_start+3 ))
+    fi
+
+    printf '\e[%s;%sH' "$scroll_y" "$scroll_x"
+
 }
 
 redraw() {
+    clear_screen
+    draw_page
+    sync_cursor
+    status_line
+}
 
-    [[ $1 == full ]] && {
-        read_file
-        scroll=0
+
+# Movement Fucntions
+
+move_up () {
+    (( y >= 1 )) && {
+        x=0
+        draw_line
+        x=$curr_x
+
+        ((y--))
+
+        if (( scroll_y > 1 )); then
+            ((scroll_y--))
+            printf '\e[A\e2K'
+        else
+            printf '\e[1L'
+            ((y_start--))
+            ((y_end--))
+        fi
+
+        draw_line
+        sync_cursor
+        status_line
     }
+}
 
+move_down () {
+    (( y+1 < total_lines )) && {
+        x=0
+        draw_line
+        x=$curr_x
 
-    
+        ((y++))
+        
+        if (( scroll_y < max_lines )); then
+            ((scroll_y++))
+            printf '\e[B\e[2K'
+        else
+            printf '\n'
+            ((y_start++))
+            ((y_end++))
+        fi
 
+        draw_line
+        sync_cursor
+        status_line
+    }
+}
+
+move_left () {
+    if (( x > 0 )); then
+        ((x--))
+        curr_x=$x
+        draw_line
+        sync_cursor
+        status_line
+    else
+        x=$(( ${#file_data[y-1]} -1 ))
+        curr_x=$x
+        move_up
+    fi
+}
+
+move_right () {
+    if (( x+1 < ${#file_data[y]} )); then
+        ((x++))
+        curr_x=$x
+        draw_line
+        sync_cursor
+        status_line
+    else
+        x=0
+        curr_x=$x
+        move_down
+    fi
 }
 
 key() {
@@ -104,24 +252,24 @@ key() {
 
         ${SCROLL_RIGHT1:=$'\e[C'}|\
         ${SCROLL_RIGHT2:=$'\eOC'})
-             
+            move_right
         ;;
 
         ${SCROLL_LEFT1:=$'\e[D'}|\
         ${SCROLL_LEFT2:=$'\eOD'})
-            
-        ;;
-
-        ${SCROLL_DOWN2:=$'\e[B'}|\
-        ${SCROLL_DOWN3:=$'\eOB'})
-            
+            move_left
         ;;
 
         ${SCROLL_UP2:=$'\e[A'}|\
         ${SCROLL_UP3:=$'\eOA'})
-            
+            move_up
         ;;
 
+        ${SCROLL_DOWN2:=$'\e[B'}|\
+        ${SCROLL_DOWN3:=$'\eOB'})
+            move_down
+        ;;
+        
         q)
             exit
         ;;
@@ -130,7 +278,7 @@ key() {
 
 }
 
-get_file() {
+check_file() {
 
     local link_path
 
@@ -142,13 +290,26 @@ get_file() {
 
     [[ -h $* ]] && {
         link_path=$( readlink -f "$*" )
-        get_file "${link_path// /\\ }"
+        check_file "${link_path// /\\ }"
         return
     }
 
     file=$( readlink -f "$*" )
 }
 
+read_file() {
+    #IFS= read -d "" -ra file_data < "$file"
+    mapfile -t file_data < "$file"
+
+    # file line count 
+    total_lines="${#file_data[*]}"
+
+    # Adding a ' ' to the end of each line to allow
+    # editing the last character of a line 
+    for (( i=0;i<total_lines;i++ ));do
+        file_data[$i]+=" "
+    done
+}
 
 main() {
     
@@ -159,12 +320,15 @@ main() {
     }
 
     # Check to see of a file name has been passsed
-    if [[ ! -z $* ]]; then
-        get_file "$*"
+    if [[ -n $* ]]; then
+        check_file "$*"
     fi
-
+    
     #! debug statements
-    echo "$0 $* $file" >> test
+    echo "$0 $* $file" >> ~/Documents/PROJECTS/IN_GIT/BTE/test
+
+    # load file onto array file_data
+    read_file
 
     # bash 5 and some versions of bash 4 don't allow SIGWINCH to interrupt
     # a 'read' command and instead wait for it to complete. In this case it
@@ -186,8 +350,9 @@ main() {
 
     #get_os
     get_term_size
+    init_vars
     setup_terminal
-    redraw full
+    redraw
 
     # Vintage infinite loop.
     for ((;;)); {

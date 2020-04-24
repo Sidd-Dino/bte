@@ -3,6 +3,7 @@
 Cos why the fuck not
 
 
-- [ ] Finish this
-- [ ] Be happy with life
-- [X] Regret having the second task
+- [X] Loading file
+- [X] Navigation of file
+- [ ] Inserting characters
+- [ ] Removing characters
