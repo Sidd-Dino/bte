@@ -1,9 +1,14 @@
 # Bash Text Editor
 
+A text editor written in bash.
 Cos why the fuck not
 
 
 - [X] Loading file
-- [X] Navigation of file
-- [ ] Inserting characters
-- [ ] Removing characters
+- [X] Basic Text Navigation
+- [ ] Complex Text Navigation
+- [X] Inserting characters
+- [X] Removing characters
+- [ ] Selection of Text
+- [ ] Searching Text
+- [ ] Saving File

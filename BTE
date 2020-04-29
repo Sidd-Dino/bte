@@ -41,6 +41,7 @@ reset_terminal() {
 }
 
 clear_screen() {
+
     # Only clear the scrolling window (dir item list).
     # '\e[%sH':    Move cursor to bottom of scroll area.
     # '\e[9999C':  Move cursor to right edge of the terminal.
@@ -84,7 +85,7 @@ status_line() {
             "$COLUMNS" "" \
             "$((y+1))/$total_lines "\
             "[scrollx/scrolly ($scroll_x/$scroll_y)] "\
-            "[x/y $x/$y] [max_lines $max_lines] [curr_x $curr_x]"
+            "[x/y $x/$y] [curr_x $curr_x] [curr_line_length ${#file_data[$y]}] [max_lines $max_lines] [y_start: $y_start  y_end: $y_end]"
 
 }
 
@@ -122,17 +123,35 @@ draw_line() {
     fi
 }
 
-draw_page() { 
+draw_page() {
+
+    # If current obj is near the top of the list, keep scroll position.
+    if (( total_lines < max_lines || y < max_lines/2 )); then
+        (( y_start=0 ))
+        (( y_end=max_lines ))
+        (( scroll_y=y+1 ))
+    
+    # If curent obj is near the end of the list, keep scroll position.
+    elif (( total_lines-y < max_lines/2 )); then
+        (( y_sart=total_lines-max_lines+1 ))
+        (( scroll_y=max_lines-(total_lines-y) ))
+        (( y_end=total_lines+1 ))
+
+    # If current obj is somewhere in the middle, center scroll position.
+    else
+        (( y_start=y-max_lines/2 ))
+        (( y_end=max_lines+y_start ))
+        (( scroll_y=max_lines/2+1 ))
+    fi
+
     for ((i=y_start;i<y_end;i++)); do
             draw_line "$i"     
             (( i+1 < y_end )) && printf "\n"
-    done
+    done 
 }
 
 sync_cursor() {
-    local curr=$y
-
-    if (( curr_x > ${#file_data[y]} )); then
+    if (( curr_x >= ${#file_data[y]} )); then
         x=$((${#file_data[y]}-1))
     else
         x=$curr_x
@@ -145,7 +164,7 @@ sync_cursor() {
         x_start=$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))
         x_end=$(( ( (p+1)*(COLUMNS-5) ) + (COLUMNS-2) ))
 
-        scroll_x=$(( x-x_start+3 ))
+        scroll_x=$(( x-x_start+4 ))
     fi
 
     printf '\e[%s;%sH' "$scroll_y" "$scroll_x"
@@ -216,7 +235,7 @@ move_left () {
         sync_cursor
         status_line
     else
-        x=$(( ${#file_data[y-1]} -1 ))
+        x=$(( ${#file_data[y-1]}-1 ))
         curr_x=$x
         move_up
     fi
@@ -229,11 +248,84 @@ move_right () {
         draw_line
         sync_cursor
         status_line
-    else
+    elif (( y+1 < total_lines )); then
         x=0
         curr_x=$x
         move_down
     fi
+}
+
+# Text Editing Functions
+
+insert_character () {
+    ((x++))
+    curr_x=$x
+    file_data[$y]="${file_data[y]::x-1}$1${file_data[y]:x-1}"
+}
+
+insert_newline () {
+    
+    file_data=( "${file_data[@]::y}" "${file_data[y]::x} " "${file_data[y]:x}" "${file_data[@]:y+1}" )
+    ((y++))
+    ((x=0))
+    ((curr_x=0))
+    ((total_lines++))
+    (( scroll_y == max_lines )) && {
+        draw_line "$((y-1))"
+        printf '\n'
+        draw_line
+    }
+
+    (( scroll_y < max_lines )) && {
+        draw_line
+        printf '\e[1L'
+        draw_line "$((y-1))"
+        ((scroll_y++))
+    }
+}
+
+bckspc () {
+
+    (( x == 0 )) && {
+        (( y < 1 )) && return;
+        
+        ((x=${#file_data[y-1]}-1))
+        ((curr_x=${#file_data[y-1]}-1))
+
+        file_data=( "${file_data[@]::y-1}" "${file_data[y-1]::-1}${file_data[y]}" "${file_data[@]:y+1}" )
+
+        ((y--))
+        ((total_lines--))
+
+        (( scroll_y == 1 )) && {
+            printf '\e2K'
+            draw_line 
+        }
+
+        (( scroll_y > 1 )) && {
+            ((scroll_y--))
+            printf '\e[A'
+
+            for ((i=0; i<=max_lines-scroll_y; i++)); do
+                draw_line "$((y+i))"
+                (( i < max_lines-scroll_y )) && printf "\n"
+            done 
+        }
+
+        return
+    }
+
+    (( x > 0 )) && {
+        
+        file_data[y]="${file_data[y]::x-1}${file_data[y]:x}"
+
+        ((x--))
+        ((curr_x=x))
+        printf '\e2K'
+        draw_line
+        return
+    }
+
 }
 
 key() {
@@ -270,8 +362,29 @@ key() {
             move_down
         ;;
         
-        q)
+        ${QUIT_KEY:=$'\030'})
             exit
+        ;;
+
+        ${NEWLINE:=""})
+            insert_newline
+            sync_cursor
+            status_line
+        ;;
+
+        ${BCKSPC1:=$'\b'}|\
+        ${BCKSPC2:=$'\177'})
+            bckspc  
+            sync_cursor
+            status_line
+        ;;
+
+        *)
+            insert_character "$1"
+            printf '\e2K'
+            draw_line
+            sync_cursor
+            status_line
         ;;
         
     esac
@@ -323,12 +436,12 @@ main() {
     if [[ -n $* ]]; then
         check_file "$*"
     fi
-    
-    #! debug statements
-    echo "$0 $* $file" >> ~/Documents/PROJECTS/IN_GIT/BTE/test
 
     # load file onto array file_data
     read_file
+
+    #! debug statements
+    printf "\n\n%s" "$0 $* $file" >> ~/Documents/PROJECTS/IN_GIT/BTE/logfile
 
     # bash 5 and some versions of bash 4 don't allow SIGWINCH to interrupt
     # a 'read' command and instead wait for it to complete. In this case it
