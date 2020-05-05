@@ -125,24 +125,47 @@ draw_line() {
 
 draw_page() {
 
-    # If current obj is near the top of the list, keep scroll position.
-    if (( total_lines < max_lines || y < max_lines/2 )); then
-        (( y_start=0 ))
-        (( y_end=max_lines ))
-        (( scroll_y=y+1 ))
-    
-    # If curent obj is near the end of the list, keep scroll position.
-    elif (( total_lines-y < max_lines/2 )); then
-        (( y_sart=total_lines-max_lines+1 ))
-        (( scroll_y=max_lines-(total_lines-y) ))
-        (( y_end=total_lines+1 ))
+    local old_max_lines=$((y_end-y_start))
+    local diff=$((max_lines-old_max_lines))
 
-    # If current obj is somewhere in the middle, center scroll position.
-    else
-        (( y_start=y-max_lines/2 ))
-        (( y_end=max_lines+y_start ))
-        (( scroll_y=max_lines/2+1 ))
-    fi
+    (( diff < 0 )) && {
+        
+        (( scroll_y <= max_lines )) && {
+            y_end=$((max_lines+y_start))
+        }
+
+        (( scroll_y > max_lines )) && {
+            scroll_y=$((max_lines))
+            y_end=$((y+1))
+            y_start=$((y_end-max_lines))
+        }
+
+    }
+
+    (( diff > 0 )) && {
+        
+        (( total_lines > max_lines )) && {
+            local top_offset=$((diff/2))
+            local bot_offset=$(( (diff/2)+(diff%2) ))
+            if (( y_start <= top_offset )); then
+                y_start=0
+                y_end=$((y_end+top_offset))
+            else
+                y_start=$((y_start-top_offset))
+            fi
+
+            y_end=$((y_end+bot_offset))
+
+            scroll_y=$((y-y_start+1))
+        }
+        
+        (( total_lines <= max_lines )) && {
+            y_start=0
+            y_end=$((max_lines))
+            scroll_y=$((y+1))
+        }
+    }
+
 
     for ((i=y_start;i<y_end;i++)); do
             draw_line "$i"     
@@ -329,57 +352,125 @@ bckspc () {
 }
 
 key() {
-    # Handle special key presses.
+
+    local special_keys
+
     [[ $1 == $'\e' ]] && {
-        read "${read_flags[@]}" -rsn 2
+        special_keys+=${1}
+        #! debug
+        printf "R 1 : %s\n" "${1}" >> logfile
 
-        # Handle a normal escape key press.
-        [[ ${1}${REPLY} == $'\e\e['* ]] &&
-            read "${read_flags[@]}" -rsn 1 _
+        # \e A
+        # \e [ A
+        # \e [ 6 ~
+        # \e [ 2 0 ~
+        # \e [ 1 ; 5~
+        # \e [ 1 ; 5C
+        # -- - - - --
+        #  1 2 3 4 5
 
-        local special_key=${1}${REPLY}
+        #* read 2
+        read "${read_flags[@]}" -srn 1
+        special_keys+=${REPLY}
+        #! debug
+        printf "R 2 : %s\n" "${REPLY}" >> logfile
+
+        [[ $REPLY == $'[' ]] && {
+            #* read 3
+            read "${read_flags[@]}" -srn 1
+            special_keys+=${REPLY}
+            #! debug
+            printf "R 3 : %s\n" "${REPLY}" >> logfile
+
+            [[ ${REPLY} == [0-9] ]] && {
+                #* read 4
+                read "${read_flags[@]}" -srn 1
+                special_keys+=${REPLY}
+                #! debug
+                printf "R 4 : %s\n" "${REPLY}" >> logfile
+                
+                [[ ${REPLY} == [[:digit:]] ]] && special_keys+="~"
+                [[ ${REPLY} == ";" ]] && {
+                    read "${read_flags[@]}" -srn 2
+                    special_keys+=${REPLY}
+                    #! debug
+                    printf "R 5 : %s\n" "${REPLY}" >> logfile
+                }
+            }
+        }
+        
     }
 
-    case ${special_key:-$1} in
+    printf "\$1: %q\nspecial_keys: %q\n"\
+            "$1"\
+            "$special_keys" >> logfile
 
-        ${SCROLL_RIGHT1:=$'\e[C'}|\
-        ${SCROLL_RIGHT2:=$'\eOC'})
+    printf "%s\n" "-----------------------------" >> logfile
+
+    case "${special_keys:-$1}" in
+
+        "${SCROLL_RIGHT1:=$'\e[C'}"|\
+        "${SCROLL_RIGHT2:=$'\eOC'}")
             move_right
         ;;
 
-        ${SCROLL_LEFT1:=$'\e[D'}|\
-        ${SCROLL_LEFT2:=$'\eOD'})
+        "${SCROLL_LEFT1:=$'\e[D'}"|\
+        "${SCROLL_LEFT2:=$'\eOD'}")
             move_left
         ;;
 
-        ${SCROLL_UP2:=$'\e[A'}|\
-        ${SCROLL_UP3:=$'\eOA'})
+        "${SCROLL_UP2:=$'\e[A'}"|\
+        "${SCROLL_UP3:=$'\eOA'}")
             move_up
         ;;
 
-        ${SCROLL_DOWN2:=$'\e[B'}|\
-        ${SCROLL_DOWN3:=$'\eOB'})
+        "${SCROLL_DOWN2:=$'\e[B'}"|\
+        "${SCROLL_DOWN3:=$'\eOB'}")
             move_down
         ;;
         
-        ${QUIT_KEY:=$'\030'})
+        "${QUIT_KEY:=$'\030'}")
             exit
         ;;
 
-        ${NEWLINE:=""})
+        "${NEWLINE:=""}")
             insert_newline
             sync_cursor
             status_line
         ;;
 
-        ${BCKSPC1:=$'\b'}|\
-        ${BCKSPC2:=$'\177'})
+        "${BCKSPC1:=$'\b'}"|\
+        "${BCKSPC2:=$'\177'}")
             bckspc  
             sync_cursor
             status_line
         ;;
 
-        *)
+        "${PGUP:=$'\E[5~'}")
+            printf "page up\n" >> logfile
+        ;;
+
+        "${PGDWN:=$'\E[6~'}")
+            printf "page down\n" >> logfile
+        ;;
+
+        "${HOME_KEY:=$'\E[1~'}")
+            ((x=0))
+            ((curr_x=0))
+            draw_line
+            sync_cursor
+        ;;
+
+        "${END_KEY:=$'\E[4~'}")
+            ((x=${#file_data[y]}))
+            ((curr_x=${#file_data[y]}))
+            draw_line
+            sync_cursor
+        ;;
+
+        [[:alnum:]] |\
+        [[:punct:]] |\
+        " ")
             insert_character "$1"
             printf '\e2K'
             draw_line
@@ -390,6 +481,8 @@ key() {
     esac
 
 }
+
+# File handling Functions
 
 check_file() {
 
@@ -441,19 +534,9 @@ main() {
     read_file
 
     #! debug statements
-    printf "\n\n%s" "$0 $* $file" >> ~/Documents/PROJECTS/IN_GIT/BTE/logfile
+    printf "%s\n" "$0 $* $file" >> ~/Documents/PROJECTS/IN_GIT/BTE/logfile
 
-    # bash 5 and some versions of bash 4 don't allow SIGWINCH to interrupt
-    # a 'read' command and instead wait for it to complete. In this case it
-    # causes the window to not redraw on resize until the user has pressed
-    # a key (causing the read to finish). This sets a read timeout on the
-    # affected versions of bash.
-    # NOTE: This shouldn't affect idle performance as the loop doesn't do
-    # anything until a key is pressed.
-    # SEE: https://github.com/dylanaraps/fff/issues/48
-    ((BASH_VERSINFO[0] > 3)) &&
-        read_flags=(-t 0.05)
-    
+    read_flags=(-t 0.005)
     
     # Trap the exit signal (we need to reset the terminal to a useable state.)
     trap 'reset_terminal' EXIT
@@ -469,7 +552,7 @@ main() {
 
     # Vintage infinite loop.
     for ((;;)); {
-        read "${read_flags[@]}" -srn 1 && key "$REPLY"
+        read -t 100 -srn 1 && key "$REPLY"
         
         # Exit if there is no longer a terminal attached.
         [[ -t 1 ]] || exit 1

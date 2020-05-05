@@ -3,7 +3,7 @@
 A text editor written in bash.
 Cos why the fuck not
 
-
+## Progress..?
 - [X] Loading file
 - [X] Basic Text Navigation
 - [ ] Complex Text Navigation
