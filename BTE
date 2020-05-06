@@ -128,7 +128,7 @@ draw_page() {
     local old_max_lines=$((y_end-y_start))
     local diff=$((max_lines-old_max_lines))
 
-    (( diff < 0 )) && {
+    if (( diff < 0 )); then
         
         (( scroll_y <= max_lines )) && {
             y_end=$((max_lines+y_start))
@@ -140,9 +140,7 @@ draw_page() {
             y_start=$((y_end-max_lines))
         }
 
-    }
-
-    (( diff > 0 )) && {
+    elif (( diff > 0 )); then
         
         (( total_lines > max_lines )) && {
             local top_offset=$((diff/2))
@@ -164,7 +162,7 @@ draw_page() {
             y_end=$((max_lines))
             scroll_y=$((y+1))
         }
-    }
+    fi
 
 
     for ((i=y_start;i<y_end;i++)); do
@@ -389,7 +387,11 @@ key() {
                 #! debug
                 printf "R 4 : %s\n" "${REPLY}" >> logfile
                 
-                [[ ${REPLY} == [[:digit:]] ]] && special_keys+="~"
+                [[ ${REPLY} == [[:digit:]] ]] && {
+                    read "${read_flags[@]}" -srn 1 _
+                    special_keys+="~"
+                }
+
                 [[ ${REPLY} == ";" ]] && {
                     read "${read_flags[@]}" -srn 2
                     special_keys+=${REPLY}
@@ -447,11 +449,60 @@ key() {
         ;;
 
         "${PGUP:=$'\E[5~'}")
-            printf "page up\n" >> logfile
+            ((x=0))
+            ((curr_x=0))
+
+            if (( y_start == 0 )); then
+                ((y=0))
+                ((scroll_y=1))
+            elif (( y_start >= max_lines )); then
+                (( y_end=y_start ))
+                (( y_start=y_start-max_lines ))
+                (( y=y_start+scroll_y-1 ))
+            elif (( y_start <= max_lines )); then
+                (( y_start=0 ))
+                (( y_end=max_lines ))
+                
+                (( y-max_lines < 0 )) && {
+                    (( y=0 ))
+                    (( scroll_y=1 ))
+                }
+
+                (( y-max_lines >= 0 )) && {
+                    (( y=y-max_lines ))
+                    (( scroll_y=y+1 ))
+                }
+            fi
+
+            redraw
         ;;
 
         "${PGDWN:=$'\E[6~'}")
-            printf "page down\n" >> logfile
+            ((x=0))
+            ((curr_x=0))
+
+            if (( y_end >= total_lines )); then
+                (( y=total_lines-1 ))
+                (( scroll_y=total_lines-y_start))
+            elif (( y_end+max_lines <= total_lines )); then
+                (( y_start=y_end ))
+                (( y_end=y_start+max_lines ))
+                (( y=y+max_lines ))
+            else
+                (( y_start=y_end ))
+                (( y_end=y_start+max_lines ))
+
+                (( y_start+scroll_y-1 >= total_lines )) && {
+                    (( y=total_lines-1 ))
+                    (( scroll_y=total_lines-y_start))
+                }
+
+                (( y_start+scroll_y-1 < total_lines )) && {
+                    (( y=y_start+scroll_y-1 ))
+                }
+            fi
+
+            redraw
         ;;
 
         "${HOME_KEY:=$'\E[1~'}")
@@ -459,6 +510,7 @@ key() {
             ((curr_x=0))
             draw_line
             sync_cursor
+            status_line
         ;;
 
         "${END_KEY:=$'\E[4~'}")
@@ -466,6 +518,11 @@ key() {
             ((curr_x=${#file_data[y]}))
             draw_line
             sync_cursor
+            status_line
+        ;;
+
+        "${REDRAW:=$'\E[15~'}")
+            redraw
         ;;
 
         [[:alnum:]] |\
@@ -552,7 +609,9 @@ main() {
 
     # Vintage infinite loop.
     for ((;;)); {
-        read -t 100 -srn 1 && key "$REPLY"
+        read -t 0.04 -srn 1 && key "$REPLY"
+
+        (:;:) && (:;:) && (:;:) && (:;:) && (:;:)
         
         # Exit if there is no longer a terminal attached.
         [[ -t 1 ]] || exit 1

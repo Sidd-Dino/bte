@@ -7,8 +7,8 @@ key() {
     [[ $1 == $'\e' ]] && {
         special_keys+=${1}
         #! debug
-        printf "R 1 : %s\n" "${1}" >> logfile
-
+        printf "R 1 : %q\n" "${1}"
+        
         # \e A
         # \e [ A
         # \e [ 6 ~
@@ -22,28 +22,32 @@ key() {
         read "${read_flags[@]}" -srn 1
         special_keys+=${REPLY}
         #! debug
-        printf "R 2 : %s\n" "${REPLY}" >> logfile
+        printf "R 2 : %q\n" "${REPLY}"
 
         [[ $REPLY == $'[' ]] && {
             #* read 3
             read "${read_flags[@]}" -srn 1
             special_keys+=${REPLY}
             #! debug
-            printf "R 3 : %s\n" "${REPLY}" >> logfile
+            printf "R 3 : %q\n" "${REPLY}"
 
             [[ ${REPLY} == [0-9] ]] && {
                 #* read 4
                 read "${read_flags[@]}" -srn 1
                 special_keys+=${REPLY}
                 #! debug
-                printf "R 4 : %s\n" "${REPLY}" >> logfile
+                printf "R 4 : %q\n" "${REPLY}"
                 
-                [[ ${REPLY} == [[:digit:]] ]] && special_keys+="~"
+                [[ ${REPLY} == [[:digit:]] ]] && {
+                    read "${read_flags[@]}" -srn 1 _
+                    special_keys+="~"
+                }
+
                 [[ ${REPLY} == ";" ]] && {
                     read "${read_flags[@]}" -srn 2
                     special_keys+=${REPLY}
                     #! debug
-                    printf "R 5 : %s\n" "${REPLY}" >> logfile
+                    printf "R 5 : %q\n" "${REPLY}"
                 }
             }
         }
