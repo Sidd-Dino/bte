@@ -2,9 +2,9 @@
 
 key() {
 
-    local special_keys
-
     [[ $1 == $'\e' ]] && {
+        local special_keys
+
         special_keys+=${1}
         #! debug
         printf "R 1 : %q\n" "${1}"
@@ -24,7 +24,7 @@ key() {
         #! debug
         printf "R 2 : %q\n" "${REPLY}"
 
-        [[ $REPLY == $'[' ]] && {
+        [[ $REPLY == $'[' || $REPLY == 'O' ]] && {
             #* read 3
             read "${read_flags[@]}" -srn 1
             special_keys+=${REPLY}
@@ -54,9 +54,22 @@ key() {
         
     }
 
-    printf "\$1: %q\nspecial_keys: %q\n"\
-            "$1"\
-            "$special_keys"
+    case "${special_keys:-$1}" in
+        # Backspace.
+        $'\b'|$'\177')
+            printf '%s\n' "key: \$'\\b' or \$'\\177'"
+        ;;
+
+        # Return / Enter.
+        "")
+            printf '%s\n' "key: \" \""
+        ;;
+
+        # Everything else.
+        *)
+            printf '%s %q\n' "key:" "${special_keys:-$1}"
+        ;;
+    esac
 
     printf "%s\n" "-----------------------------"
 
@@ -64,6 +77,4 @@ key() {
 
 read_flags=(-t 0.01)
 
-for((;;)){
-    read -t 120 -srn 1 && key "$REPLY"
-}
+read -srn 1 && key "$REPLY"

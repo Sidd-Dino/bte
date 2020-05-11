@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-#  ______     ______   ______    
-# /\  == \   /\__  _\ /\  ___\   
-# \ \  __<   \/_/\ \/ \ \  __\   
-#  \ \_____\    \ \_\  \ \_____\ 
-#   \/_____/     \/_/   \/_____/ 
-#                                
+#
+#  ______   __       ______    
+# /\  == \ /\ \     /\  ___\   
+# \ \  __< \ \ \____\ \  __\   
+#  \ \_____\\ \_____\\ \_____\ 
+#   \/_____/ \/_____/ \/_____/ 
+#
 # Bash Text Editor
 # cos.... Why the fuck not?
 
-
-# begin code kanging from fff( https://github.com/dylanaraps/fff )
-#------------------------------------------------------------------
-
+#
+###############################################################################
 setup_terminal() {
+    #* Code yoinked from fff( https://github.com/dylanaraps/fff )
     # Setup the terminal for the TUI.
     # '\e[?1049h': Use alternative screen buffer.
     # '\e[?7l':    Disable line wrapping.
@@ -27,6 +27,7 @@ setup_terminal() {
 }
 
 reset_terminal() {
+    #* Code yoinked from fff( https://github.com/dylanaraps/fff )
     # Reset the terminal to a useable state (undo all changes).
     # '\e[?7h':   Re-enable line wrapping.
     # '\e[?25h':  Unhide the cursor.
@@ -41,7 +42,7 @@ reset_terminal() {
 }
 
 clear_screen() {
-
+    #* Code yoinked from fff( https://github.com/dylanaraps/fff )
     # Only clear the scrolling window (dir item list).
     # '\e[%sH':    Move cursor to bottom of scroll area.
     # '\e[9999C':  Move cursor to right edge of the terminal.
@@ -54,6 +55,7 @@ clear_screen() {
 }
 
 get_term_size() {
+    #* Code yoinked from fff( https://github.com/dylanaraps/fff )
     # Get terminal size ('stty' is POSIX and always available).
     # This can't be done reliably across all bash versions in pure bash.
     read -r LINES COLUMNS < <(stty size)
@@ -62,58 +64,100 @@ get_term_size() {
     ((max_lines=LINES-3))
 }
 
-# end of kanging
-#------------------------------------------------------------------
-
-init_vars() {
-    # setting up variables for position within file
-    x=0
-    y=0
-    scroll_x=1
-    scroll_y=1
-
-    curr_x=0    
-
-    y_start=0
-    y_end=$max_lines
-}
-
+#
+###############################################################################
 status_line() {
-    
-    printf "\e7\e[%sH\e[30;42m%*s\r%s%s%s\e[m\e8"\
+
+    # '\e7'        Save cursor position.
+    #              This is more widely supported than '\e[s'.
+    # '\e[%sH'     Move cursor to bottom of the terminal.
+    # '\e[30;41m'  Set foreground and background colors.
+    # '%*s'        Insert enough spaces to fill the screen width.
+    #              This sets the background color to the whole line
+    #              and fixes issues in 'screen' where '\e[K' doesn't work.
+    # '\r'         Move cursor back to column 0 (was at EOL due to above).
+    # '\e[m'       Reset text formatting.
+    # '\e[%sH\e[K' Clear line below status_line.
+    # '\e8'        Restore cursor position.
+    #              This is more widely supported than '\e[u'.
+
+    printf "\e7\e[%sH\e[30;42m%*s\r%s\e[m\e[%sH\e[K\e8"\
             "$((LINES-1))" \
             "$COLUMNS" "" \
-            "$((y+1))/$total_lines "\
-            "[scrollx/scrolly ($scroll_x/$scroll_y)] "\
-            "[x/y $x/$y] [curr_x $curr_x] [curr_line_length ${#file_data[$y]}] [max_lines $max_lines] [y_start: $y_start  y_end: $y_end]"
+            "($((y+1))/$total_lines)"\
+            "$LINES"
 
 }
 
 draw_line() {
+    # BTE doesnt wrap lines. Hence it has to
+    # display part of a line depending on the 
+    # x position.
+    #
+    # There are 4 possible cases that need to be handled
+    # to display a line properly.
+    #
+    #             COLUMNS
+    #     |<--------------------->|
+    #   I 1234567890
+    #  II 123456789012345678901234>
+    # III <23456789012345678901234>
+    #  IV <234567890
+    #
+    # Where COLUMNS is terminal width
+    #
+    # Case I:
+    #       The length of the line is smaller than or equal
+    #       to the COLUMNS
+    #
+    # Case II:
+    #       The length of the line is greater than the
+    #       COLUMNS and 
+    #       The x position of at which the cursor is , 
+    #       is smaller than (COLUMNS-2).
+    #
+    # Case III:
+    #       The length of the line is greater than the
+    #       terminal width and the x position is somewhere
+    #       in the middle of the line
+    #
+    # Case IV:
+    #       The length of the line is greater than the
+    #       terminal width but the x position is near
+    #       the end of the line
+    # 
+    
     local curr=$y
 
     [[ -n $1 ]] && {
         curr=$*
     }
-
+    
+    # clear the current line
     printf '\e[2K\r'
 
-    if (( ${#file_data[curr]} < COLUMNS-2 )); then
+    # Case I
+    # Just print the entire line
+    if (( ${#file_data[curr]} <= COLUMNS )); then
         printf "%s" "${file_data[curr]}"
+    
+    # Case II
     elif (( curr != y || x < (COLUMNS-2) )); then
             printf "%s\e[30;41m%s\e[m" \
                     "${file_data[curr]:0:$((COLUMNS-1))}"\
                     ">"
     else
-        local p=$(( (x-COLUMNS-2) / (COLUMNS-5) ))
-        x_start=$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))
-        x_end=$(( ( (p+1)*(COLUMNS-5) ) + (COLUMNS-2) ))
+        local p=$(( (x-COLUMNS+2) / (COLUMNS-5) ))
+        x_start=$(( ( p*(COLUMNS-5) )+(COLUMNS-2) ))
+        x_end=$(( x_start+COLUMNS-5 ))
 
+        # Case III
         if (( ${#file_data[curr]} < x_end )); then
             printf "\e[30;41m%s\e[m%s" \
                     "<" \
                     "${file_data[curr]:$((x_start-2)):$x_end}"
 
+        # Case IV
         else
             printf "\e[30;41m%s\e[m%s\e[30;41m%s\e[m" \
                     "<" \
@@ -128,26 +172,42 @@ draw_page() {
     local old_max_lines=$((y_end-y_start))
     local diff=$((max_lines-old_max_lines))
 
+    # Screen size has decreased
     if (( diff < 0 )); then
-        
+        # If the cursor postition is within the scrolling area
         (( scroll_y <= max_lines )) && {
             y_end=$((max_lines+y_start))
         }
 
+        # If the cursor position is outside of the scrolling area
         (( scroll_y > max_lines )) && {
             scroll_y=$((max_lines))
             y_end=$((y+1))
             y_start=$((y_end-max_lines))
         }
 
+    # Screen size has increased
     elif (( diff > 0 )); then
-        
+
+        # If the files length is bigger than scroll area
         (( total_lines > max_lines )) && {
             local top_offset=$((diff/2))
             local bot_offset=$(( (diff/2)+(diff%2) ))
+            
+            #
+            # The code below attempts to display the previously
+            # visible lines in the middle of the scroll area
+            # with the remaining space filled with available
+            # lines from file
+            #
+            # If there arent enough lines in the file above
+            # y_start to cover the top region
             if (( y_start <= top_offset )); then
                 y_start=0
                 y_end=$((y_end+top_offset))
+            
+            # If there are enough lines in the file above
+            # y_start to cover the top region
             else
                 y_start=$((y_start-top_offset))
             fi
@@ -157,6 +217,7 @@ draw_page() {
             scroll_y=$((y-y_start+1))
         }
         
+        # If the files length is smaller than scroll area
         (( total_lines <= max_lines )) && {
             y_start=0
             y_end=$((max_lines))
@@ -166,7 +227,7 @@ draw_page() {
 
 
     for ((i=y_start;i<y_end;i++)); do
-            draw_line "$i"     
+            draw_line "$i"
             (( i+1 < y_end )) && printf "\n"
     done 
 }
@@ -178,12 +239,12 @@ sync_cursor() {
         x=$curr_x
     fi
 
-    if (( x < (COLUMNS-2) )); then
+    if (( x < (COLUMNS-2) || ${#file_data[y]} <= COLUMNS )); then
         scroll_x=$((x+1))
     else
-        local p=$(( (x-COLUMNS-2) / (COLUMNS-5) ))
+        local p=$(( (x-COLUMNS+2) / (COLUMNS-5) ))
         x_start=$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))
-        x_end=$(( ( (p+1)*(COLUMNS-5) ) + (COLUMNS-2) ))
+        x_end=$(( x_start+COLUMNS-5 ))
 
         scroll_x=$(( x-x_start+4 ))
     fi
@@ -199,9 +260,8 @@ redraw() {
     status_line
 }
 
-
-# Movement Fucntions
-
+#
+###############################################################################
 move_up () {
     (( y >= 1 )) && {
         x=0
@@ -276,8 +336,8 @@ move_right () {
     fi
 }
 
-# Text Editing Functions
-
+#
+###############################################################################
 insert_character () {
     ((x++))
     curr_x=$x
@@ -286,7 +346,10 @@ insert_character () {
 
 insert_newline () {
     
-    file_data=( "${file_data[@]::y}" "${file_data[y]::x} " "${file_data[y]:x}" "${file_data[@]:y+1}" )
+    file_data=( "${file_data[@]::y}" \
+                "${file_data[y]::x} " \
+                "${file_data[y]:x}" \
+                "${file_data[@]:y+1}" )
     ((y++))
     ((x=0))
     ((curr_x=0))
@@ -313,7 +376,9 @@ bckspc () {
         ((x=${#file_data[y-1]}-1))
         ((curr_x=${#file_data[y-1]}-1))
 
-        file_data=( "${file_data[@]::y-1}" "${file_data[y-1]::-1}${file_data[y]}" "${file_data[@]:y+1}" )
+        file_data=( "${file_data[@]::y-1}" \
+                    "${file_data[y-1]::-1}${file_data[y]}" \
+                    "${file_data[@]:y+1}" )
 
         ((y--))
         ((total_lines--))
@@ -349,14 +414,93 @@ bckspc () {
 
 }
 
+delete_key () {
+    (( x == ${#file_data[y]}-1 )) && {
+        ((curr_x=x))
+
+        (( y == total_lines-1 )) && return;
+
+        file_data=( "${file_data[@]::y}" \
+                    "${file_data[y]::-1}${file_data[y+1]}" \
+                    "${file_data[@]:y+2}" )
+
+        ((total_lines--))
+
+        (( scroll_y == max_lines )) && {
+            printf '\e2K'
+            draw_line
+        }
+
+        (( scroll_y < max_lines )) && {
+            printf '\e2K'
+
+            for ((i=0; i<=max_lines-scroll_y; i++)); do
+                draw_line "$((y+i))"
+                (( i < max_lines-scroll_y )) && printf "\n"
+            done
+        }
+
+        return
+    }
+
+    (( x < ${#file_data[y]}-1 )) && {
+        file_data[y]="${file_data[y]::x}${file_data[y]:x+1}"
+
+        ((curr_x=x))
+        printf '\e2K'
+        draw_line
+        return
+    }
+}
+
+#
+###############################################################################
+check_file() {
+
+    local link_path
+
+    [[ ! -a "$*" ]] && printf "%s\n" "[ERR] File $* does not exist" && exit
+
+    [[ ! -r $* ]] && printf "%s\n" "[ERR] File $* can't be read" && exit
+
+    [[ -d $* ]] && printf "%s\n" "[ERR] File $* is a directory" && exit
+
+    [[ -h $* && -e $* ]] && {
+        link_path=$( readlink -f "$*" )
+        check_file "${link_path// /\\ }"
+        return
+    }
+
+    file=$( readlink -f "$*" )
+}
+
+read_file() {
+
+    # Bash 4+
+    [[ -n $file ]] && mapfile -t file_data < "$file"
+
+    (( ${#file_data[*]} == 0 )) && {
+        file_data=( "" )
+    }
+
+    # file line count 
+    total_lines="${#file_data[*]}"
+
+    # Adding a ' ' to the end of each line to allow
+    # editing the last character of a line 
+    for (( i=0;i<total_lines;i++ ));do
+        file_data[$i]+=" "
+    done
+}
+
+#
+###############################################################################
 key() {
 
     local special_keys
 
     [[ $1 == $'\e' ]] && {
         special_keys+=${1}
-        #! debug
-        printf "R 1 : %s\n" "${1}" >> logfile
 
         # \e A
         # \e [ A
@@ -370,22 +514,16 @@ key() {
         #* read 2
         read "${read_flags[@]}" -srn 1
         special_keys+=${REPLY}
-        #! debug
-        printf "R 2 : %s\n" "${REPLY}" >> logfile
 
         [[ $REPLY == $'[' ]] && {
             #* read 3
             read "${read_flags[@]}" -srn 1
             special_keys+=${REPLY}
-            #! debug
-            printf "R 3 : %s\n" "${REPLY}" >> logfile
 
             [[ ${REPLY} == [0-9] ]] && {
                 #* read 4
                 read "${read_flags[@]}" -srn 1
                 special_keys+=${REPLY}
-                #! debug
-                printf "R 4 : %s\n" "${REPLY}" >> logfile
                 
                 [[ ${REPLY} == [[:digit:]] ]] && {
                     read "${read_flags[@]}" -srn 1 _
@@ -395,116 +533,113 @@ key() {
                 [[ ${REPLY} == ";" ]] && {
                     read "${read_flags[@]}" -srn 2
                     special_keys+=${REPLY}
-                    #! debug
-                    printf "R 5 : %s\n" "${REPLY}" >> logfile
                 }
             }
         }
         
     }
 
-    printf "\$1: %q\nspecial_keys: %q\n"\
-            "$1"\
-            "$special_keys" >> logfile
-
-    printf "%s\n" "-----------------------------" >> logfile
-
     case "${special_keys:-$1}" in
-
+        
+        # Text Navigation
+        #-=========================================
+        
+        # Move Cursor Right
+        # 'C' is what bash sees when the right arrow is pressed
+        # ('\e[C' or '\eOC').
         "${SCROLL_RIGHT1:=$'\e[C'}"|\
         "${SCROLL_RIGHT2:=$'\eOC'}")
             move_right
         ;;
 
+        # Move Cursor Left
+        # 'D' is what bash sees when the left arrow is pressed
+        # ('\e[D' or '\eOD').
         "${SCROLL_LEFT1:=$'\e[D'}"|\
         "${SCROLL_LEFT2:=$'\eOD'}")
             move_left
         ;;
 
+        # Scroll up.
+        # 'A' is what bash sees when the up arrow is pressed
+        # ('\e[A' or '\eOA').
         "${SCROLL_UP2:=$'\e[A'}"|\
         "${SCROLL_UP3:=$'\eOA'}")
             move_up
         ;;
 
+        # Scroll down.
+        # 'B' is what bash sees when the down arrow is pressed
+        # ('\e[B' or '\eOB').
         "${SCROLL_DOWN2:=$'\e[B'}"|\
         "${SCROLL_DOWN3:=$'\eOB'}")
             move_down
         ;;
-        
-        "${QUIT_KEY:=$'\030'}")
-            exit
-        ;;
 
-        "${NEWLINE:=""}")
-            insert_newline
-            sync_cursor
-            status_line
-        ;;
-
-        "${BCKSPC1:=$'\b'}"|\
-        "${BCKSPC2:=$'\177'}")
-            bckspc  
-            sync_cursor
-            status_line
-        ;;
-
+        # Go up one page
         "${PGUP:=$'\E[5~'}")
             ((x=0))
             ((curr_x=0))
+            
+            (( y != 0 )) && {
+                if (( y_start == 0 )); then
+                    ((y=0))
+                    ((scroll_y=1))
+                elif (( y_start >= max_lines )); then
+                    (( y_end=y_start ))
+                    (( y_start=y_start-max_lines ))
+                    (( y=y_start+scroll_y-1 ))
+                elif (( y_start <= max_lines )); then
+                    (( y_start=0 ))
+                    (( y_end=max_lines ))
+                    
+                    (( y-max_lines < 0 )) && {
+                        (( y=0 ))
+                        (( scroll_y=1 ))
+                    }
 
-            if (( y_start == 0 )); then
-                ((y=0))
-                ((scroll_y=1))
-            elif (( y_start >= max_lines )); then
-                (( y_end=y_start ))
-                (( y_start=y_start-max_lines ))
-                (( y=y_start+scroll_y-1 ))
-            elif (( y_start <= max_lines )); then
-                (( y_start=0 ))
-                (( y_end=max_lines ))
-                
-                (( y-max_lines < 0 )) && {
-                    (( y=0 ))
-                    (( scroll_y=1 ))
-                }
+                    (( y-max_lines >= 0 )) && {
+                        (( y=y-max_lines ))
+                        (( scroll_y=y+1 ))
+                    }
+                fi
 
-                (( y-max_lines >= 0 )) && {
-                    (( y=y-max_lines ))
-                    (( scroll_y=y+1 ))
-                }
-            fi
-
-            redraw
+                redraw
+            }
         ;;
 
+        # Go down one page
         "${PGDWN:=$'\E[6~'}")
             ((x=0))
             ((curr_x=0))
 
-            if (( y_end >= total_lines )); then
-                (( y=total_lines-1 ))
-                (( scroll_y=total_lines-y_start))
-            elif (( y_end+max_lines <= total_lines )); then
-                (( y_start=y_end ))
-                (( y_end=y_start+max_lines ))
-                (( y=y+max_lines ))
-            else
-                (( y_start=y_end ))
-                (( y_end=y_start+max_lines ))
-
-                (( y_start+scroll_y-1 >= total_lines )) && {
+            (( y != total_lines-1 )) && {
+                if (( y_end >= total_lines )); then
                     (( y=total_lines-1 ))
                     (( scroll_y=total_lines-y_start))
-                }
+                elif (( y_end+max_lines <= total_lines )); then
+                    (( y_start=y_end ))
+                    (( y_end=y_start+max_lines ))
+                    (( y=y+max_lines ))
+                else
+                    (( y_start=y_end ))
+                    (( y_end=y_start+max_lines ))
 
-                (( y_start+scroll_y-1 < total_lines )) && {
-                    (( y=y_start+scroll_y-1 ))
-                }
-            fi
+                    (( y_start+scroll_y-1 >= total_lines )) && {
+                        (( y=total_lines-1 ))
+                        (( scroll_y=total_lines-y_start))
+                    }
 
-            redraw
+                    (( y_start+scroll_y-1 < total_lines )) && {
+                        (( y=y_start+scroll_y-1 ))
+                    }
+                fi
+
+                redraw
+            }
         ;;
 
+        # Move to start of line
         "${HOME_KEY:=$'\E[1~'}")
             ((x=0))
             ((curr_x=0))
@@ -513,6 +648,7 @@ key() {
             status_line
         ;;
 
+        # Move to end of line
         "${END_KEY:=$'\E[4~'}")
             ((x=${#file_data[y]}))
             ((curr_x=${#file_data[y]}))
@@ -520,11 +656,39 @@ key() {
             sync_cursor
             status_line
         ;;
+        
+        # Text Editing
+        #-=========================================
 
-        "${REDRAW:=$'\E[15~'}")
-            redraw
+        # TO instert a newline in the text
+        "${NEWLINE:=""}")
+            insert_newline
+            sync_cursor
+
+            MODIFIED=1
+            status_line
+        ;;
+        
+        # Backspace to remove a character before the cursor
+        "${BCKSPC1:=$'\b'}"|\
+        "${BCKSPC2:=$'\177'}")
+            bckspc  
+            sync_cursor
+            MODIFIED=1
+            status_line
         ;;
 
+        # Delete key to remove the character under the cursor
+        "${DELETE_KEY:=$'\e[3~'}")
+            delete_key
+            sync_cursor
+            MODIFIED=1
+
+            status_line
+        ;;
+
+        # A-Z , a-z , 0-9 and special charcters to insert into
+        # the text
         [[:alnum:]] |\
         [[:punct:]] |\
         " ")
@@ -532,48 +696,43 @@ key() {
             printf '\e2K'
             draw_line
             sync_cursor
+            MODIFIED=1
             status_line
+        ;;
+
+        # Editor Functionality
+        #-=========================================
+
+        # F5 key to redraw the current screen
+        # Used for debug purposes
+        "${REDRAW:=$'\E[15~'}")
+            redraw
+        ;;
+
+        # Ctrl+x to quit
+        "${QUIT_KEY:=$'\030'}")
+            exit
         ;;
         
     esac
 
 }
 
-# File handling Functions
+init_vars() {
+    # setting up variables for position within file
+    x=0
+    y=0
+    scroll_x=1
+    scroll_y=1
 
-check_file() {
+    curr_x=0    
 
-    local link_path
+    y_start=0
+    y_end=$max_lines
 
-    [[ ! -a "$*" ]] && printf "%s\n" "[ERR] File $* does not exist" && exit
-
-    [[ ! -r $* ]] && printf "%s\n" "[ERR] File $* can't be read" && exit
-
-    [[ -d $* ]] && printf "%s\n" "[ERR] File $* is a directory" && exit
-
-    [[ -h $* ]] && {
-        link_path=$( readlink -f "$*" )
-        check_file "${link_path// /\\ }"
-        return
-    }
-
-    file=$( readlink -f "$*" )
+    MODIFIED=0
 }
-
-read_file() {
-    #IFS= read -d "" -ra file_data < "$file"
-    mapfile -t file_data < "$file"
-
-    # file line count 
-    total_lines="${#file_data[*]}"
-
-    # Adding a ' ' to the end of each line to allow
-    # editing the last character of a line 
-    for (( i=0;i<total_lines;i++ ));do
-        file_data[$i]+=" "
-    done
-}
-
+ 
 main() {
     
 
@@ -593,7 +752,7 @@ main() {
     #! debug statements
     printf "%s\n" "$0 $* $file" >> ~/Documents/PROJECTS/IN_GIT/BTE/logfile
 
-    read_flags=(-t 0.005)
+    read_flags=(-t 0.05)
     
     # Trap the exit signal (we need to reset the terminal to a useable state.)
     trap 'reset_terminal' EXIT
@@ -609,9 +768,9 @@ main() {
 
     # Vintage infinite loop.
     for ((;;)); {
-        read -t 0.04 -srn 1 && key "$REPLY"
+        read "${read_flags[@]}" -srn 1 && key "$REPLY"
 
-        (:;:) && (:;:) && (:;:) && (:;:) && (:;:)
+        (:;:) && (:;:) && (:;:)
         
         # Exit if there is no longer a terminal attached.
         [[ -t 1 ]] || exit 1

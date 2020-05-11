@@ -3,6 +3,13 @@
 A text editor written in bash.
 Cos why the fuck not
 
+![screenshot](https://raw.github.com/Sidd-Dino/BTE/master/screenshot.png "screenshot")
+
+## Requirements
+```
+bash 4+
+```
+
 ## Progress..?
 - [X] Loading file
 - [X] Basic text navigation
@@ -19,7 +26,3 @@ Cos why the fuck not
   - [ ] Searching text
   - [ ] Replacing text
 - [ ] Saving File
-
-- [ ] Additional Features ???
-  - Toooo.. much of a feature creep
-  - Soooo.... no
