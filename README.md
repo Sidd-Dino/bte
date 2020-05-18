@@ -11,12 +11,13 @@ bash 4+
 ```
 
 ## Progress..?
+
 - [X] Loading file
 - [X] Basic text navigation
 - [ ] Complex text navigation
-  - [X] PGUP , PGDWN nav
-  - [X] HOME , END nav
-  - [ ] Ctrl+[arrow keys] nav / Word based nav
+  - [X] `PGUP` and `PGDWN` nav
+  - [X] `HOME` , `END` nav
+  - [ ] `Ctrl+[arrow keys]` nav / Word based nav
 - [X] Inserting characters
 - [X] Removing characters
 - [ ] Text manipulation
@@ -26,3 +27,9 @@ bash 4+
   - [ ] Searching text
   - [ ] Replacing text
 - [ ] Saving File
+- [ ] Opening a file from an empty buffer
+- [ ] Syntax Highlighting
+
+## Keybindings
+
+The keybindings are the same as nano's keybindings
