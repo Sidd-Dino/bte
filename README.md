@@ -31,5 +31,21 @@ bash 4+
 - [ ] Syntax Highlighting
 
 ## Keybindings
+```
+Arrow Keys  : For cursor movement
+Pg Up       : To move up a page
+Pg Dwn      : To move down a page
 
-The keybindings are the same as nano's keybindings
+Meta+G      : Goto line/coord
+
+Back Space  : To delete the character before the cursor
+Delete      : To delete the character under the cursor
+
+Meta+U      : Undo the most recent action
+Meta+R      : Redo an undone action
+
+Ctrl+W      : Search a pattern
+
+Ctrl+O      : Save file
+Ctrl+X      : Quit the editor
+```

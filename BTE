@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#-------------------------------------------------#
 #   __  __         __        ______               #
 #  / / / /___  ___/ /___    /_  __/____ ___  ___  #
 # / /_/ // _ \/ _  // _ \    / /  / __// -_)/ -_) #
@@ -34,6 +35,9 @@ reset_terminal() {
     #             Also sets cursor to (0,0).
     # '\e[?1049l: Restore main screen buffer.
     printf '\e[?7h\e[?25h\e[2J\e[;r\e[?1049l'
+
+    #!debug
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n" >> BTE_DUMP
 
     # Show user input.
     stty echo
@@ -81,7 +85,7 @@ status_line() {
     printf "\e7\e[%sH\e[30;42m%*s\r%s\e[m\e[%sH\e[K\e8"\
             "$((LINES-1))" \
             "$COLUMNS" "" \
-            "($((y+1))/$total_lines)"\
+            "Ln $((y+1)), Col $((x+1))"\
             "$LINES"
 
 }
@@ -178,7 +182,7 @@ draw_page() {
 
         # If the cursor position is outside of the scrolling area
         (( scroll_y > max_lines )) && {
-            scroll_y=$((max_lines))
+            #scroll_y=$((max_lines))
             y_end=$((y+1))
             y_start=$((y_end-max_lines))
         }
@@ -210,14 +214,14 @@ draw_page() {
 
             y_end=$((y_end+bot_offset))
 
-            scroll_y=$((y-y_start+1))
+            #scroll_y=$((y-y_start+1))
         }
 
         # If the files length is smaller than scroll area
         (( total_lines <= max_lines )) && {
             y_start=0
             y_end=$((max_lines))
-            scroll_y=$((y+1))
+            #scroll_y=$((y+1))
         }
     fi
 
@@ -229,15 +233,19 @@ draw_page() {
 }
 
 sync_cursor() {
-    # If curr_x is greater than the length of the current y'th line
+    # Sync Y position
+    scroll_y=$((y-y_start+1))
+
+    # Sync X position
+    # If prev_x is greater than the length of the current y'th line
     # The value of x is set to the end of the line
-    if (( curr_x >= ${#file_data[y]} )); then
+    if (( prev_x >= ${#file_data[y]} )); then
         x=$((${#file_data[y]}-1))
 
-    # If curr_x is smaller than or equal to the length
+    # If prev_x is smaller than or equal to the length
     # of the current y'th line
     else
-        x=$curr_x
+        x=$prev_x
     fi
 
     if (( x < (COLUMNS-2) || ${#file_data[y]} <= COLUMNS )); then
@@ -264,19 +272,19 @@ redraw() {
 
 # Text Navigation
 ###############################################################################
-move_up () {
+move_up() {
     # '\e[1L' : Insert a line above the cursor.
     # '\e[A'  : Move cursor up a line.
     # '\e[2K' : Clear current line
     (( y >= 1 )) && {
         x=0
         draw_line
-        x=$curr_x
+        x=$prev_x
 
         ((y--))
 
         if (( scroll_y > 1 )); then
-            ((scroll_y--))
+            #((scroll_y--))
             printf '\e[A\e2K'
         else
             printf '\e[1L'
@@ -290,18 +298,18 @@ move_up () {
     }
 }
 
-move_down () {
+move_down() {
     # '\e[B'  : Move cursor down a line.
     # '\e[2K' : Clear current line
     (( y+1 < total_lines )) && {
         x=0
         draw_line
-        x=$curr_x
+        x=$prev_x
 
         ((y++))
 
         if (( scroll_y < max_lines )); then
-            ((scroll_y++))
+            #((scroll_y++))
             printf '\e[B\e[2K'
         else
             printf '\n'
@@ -315,43 +323,298 @@ move_down () {
     }
 }
 
-move_left () {
+move_left() {
     if (( x > 0 )); then
         ((x--))
-        curr_x=$x
+        prev_x=$x
         draw_line
         sync_cursor
         status_line
     else
         x=$(( ${#file_data[y-1]}-1 ))
-        curr_x=$x
+        prev_x=$x
         move_up
     fi
 }
 
-move_right () {
+move_right() {
     if (( x+1 < ${#file_data[y]} )); then
         ((x++))
-        curr_x=$x
+        prev_x=$x
         draw_line
         sync_cursor
         status_line
     elif (( y+1 < total_lines )); then
         x=0
-        curr_x=$x
+        prev_x=$x
         move_down
     fi
 }
 
-# Text Modification
+# Undo/Redo Stack Function
 ###############################################################################
-insert_character () {
-    file_data[$y]="${file_data[y]::x}$1${file_data[y]:x}"
-    ((x++))
-    curr_x=$x
+undo() {
+    
+    (( ${#undo_stack} == 0 )) && {
+        return
+    }
+
+    # Variables to store top most block
+    local action
+    local blk_x_coord blk_y_coord
+    local data
+
+
+    # Read top block of undo stack
+    action=${undo_stack[1]:5}
+
+    old_IFS=$IFS
+    IFS=" " read -rs blk_x_coord blk_y_coord <<< "${undo_stack[2]:5}"
+    IFS=$old_IFS
+
+    data=${undo_stack[3]:5}
+
+    # Undo said action
+    case "$action" in
+        "INS")
+            local fore="${file_data[blk_y_coord]::blk_x_coord}"
+            local aft="${file_data[blk_y_coord]:blk_x_coord+${#data}}"
+            file_data[blk_y_coord]="$fore$aft"
+            ((x=blk_x_coord))
+            ((y=blk_y_coord))
+        ;;
+
+        "DEL"|\
+        "BCK")
+            local fore="${file_data[blk_y_coord]::blk_x_coord}"
+            local aft="${file_data[blk_y_coord]:blk_x_coord}"
+            file_data[blk_y_coord]="$fore$data$aft"
+            ((x=${#fore}+${#data}))
+            ((y=blk_y_coord))
+        ;;
+
+        "L_B")
+            file_data=(
+                "${file_data[@]::blk_y_coord}" \
+                "${file_data[blk_y_coord]::-1}${file_data[blk_y_coord+1]}" \
+                "${file_data[@]:blk_y_coord+2}" \
+            )
+            ((x=blk_x_coord))
+            ((y=blk_y_coord))
+        ;;
+
+        "L_J")
+            file_data=(
+                "${file_data[@]::blk_y_coord}"
+                "${file_data[blk_y_coord]::blk_x_coord} "
+                "${file_data[blk_y_coord]:blk_x_coord}"
+                "${file_data[@]:blk_y_coord+1}"
+            )
+            ((x=0))
+            ((y=blk_y_coord+1))
+        ;;
+    esac
+
+    ((prev_x=x))
+
+    # popping block from undo_stack
+    undo_stack=("${undo_stack[@]:4}")
+
+    # pushing the popped block into redo stack 
+    redo_stack=( 
+        "<--REDO_BLOCK-->"
+        "ACTN:$action"
+        "CRSR:$blk_x_coord $blk_y_coord"
+        "DAYA:$data"
+        "${redo_stack[@]}"
+    )
+
+
+    # display
+    if (( y_start > y || y_end <= y )); then
+        local p=$((y/max_lines))
+        y_start=$((p*max_lines))
+        y_end=$((y_start+max_lines))
+    fi
+
+    redraw
+
 }
 
-insert_newline () {
+redo() {
+    (( ${#redo_stack} == 0 )) && {
+        return
+    }
+
+    # Variables to store top most block
+    local action
+    local blk_x_coord blk_y_coord
+    local data
+
+
+    # Read top block of undo stack
+    action=${redo_stack[1]:5}
+
+    old_IFS=$IFS
+    IFS=" " read -rs blk_x_coord blk_y_coord <<< "${redo_stack[2]:5}"
+    IFS=$old_IFS
+
+    data=${redo_stack[3]:5}
+
+    # Undo said action
+    case "$action" in
+        "INS")
+            local fore="${file_data[blk_y_coord]::blk_x_coord}"
+            local aft="${file_data[blk_y_coord]:blk_x_coord}"
+            file_data[blk_y_coord]="$fore$data$aft"
+            ((x=${#fore}+${#data}))
+            ((y=blk_y_coord))
+        ;;
+
+        "DEL"|\
+        "BCK")
+            local fore="${file_data[blk_y_coord]::blk_x_coord}"
+            local aft="${file_data[blk_y_coord]:blk_x_coord+${#data}}"
+            file_data[blk_y_coord]="$fore$aft"
+            ((x=blk_x_coord))
+            ((y=blk_y_coord))
+        ;;
+
+        "L_B")
+            file_data=(
+                "${file_data[@]::blk_y_coord}"
+                "${file_data[blk_y_coord]::blk_x_coord} "
+                "${file_data[blk_y_coord]:blk_x_coord}"
+                "${file_data[@]:blk_y_coord+1}"
+            )
+            ((x=0))
+            ((y=blk_y_coord+1))
+        ;;
+
+        "L_J")
+            file_data=(
+                "${file_data[@]::blk_y_coord}" \
+                "${file_data[blk_y_coord]::-1}${file_data[blk_y_coord+1]}" \
+                "${file_data[@]:blk_y_coord+2}" \
+            )
+            ((x=blk_x_coord))
+            ((y=blk_y_coord))
+        ;;
+    esac
+
+    ((prev_x=x))
+
+    # popping block from redo_stack
+    redo_stack=("${redo_stack[@]:4}")
+
+    # pushing the popped block into undo stack 
+    undo_stack=( 
+        "<--REDO_BLOCK-->"
+        "ACTN:$action"
+        "CRSR:$blk_x_coord $blk_y_coord"
+        "DAYA:$data"
+        "${undo_stack[@]}"
+    )
+
+
+    # display
+    (( y_start > y || y_end <= y )) && {
+        local p=$((y/max_lines))
+        y_start=$((p*max_lines))
+        y_end=$((y_start+max_lines))
+    }
+
+    redraw
+}
+
+mergeable_block_check() {
+    ((mergeable_block=0))
+
+    (( ${#undo_stack} == 0 )) && {
+        return
+    }
+
+    [[ "${undo_stack[1]:5}" != "$1" ]] && {
+        return
+    }
+
+    [[ "BCK DEL" == *$1* && ${undo_stack[2]:5} == "$x $y" ]] && {
+        ((mergeable_block=1))
+    }
+
+    [[ "INS" == "$1" && \
+        ${undo_stack[2]:5} == "$((x-${#undo_stack[3]}+5)) $y" ]] && {
+        ((mergeable_block=1))
+    }
+
+}
+
+add_block_to_stack() {
+    # $1 :  This will hold ACTN
+    # $2 :  This will hold a secondary action for cases like a LINE JOIN 
+    #      invoked by DELETE or BACKSPACE
+    #       In other cases it will hold the charater needed to be stored
+    #      for ACTIONs like INSERT, BACKSPACE, DELETE
+
+    local action="$1"
+
+    mergeable_block_check "$action"
+
+    (( mergeable_block==0 )) && {
+        local cursor="CRSR:$x $y"
+        local data="DATA:"
+
+        [[ "INS DEL" == *$action* ]] && {
+            data+="$2"
+        }
+
+        [[ "BCK" == "$action" ]] && {
+            cursor="CRSR:$((x-1)) $y"
+            data+="$2"
+        }
+
+        [[ "L_J" == "$action" && "BCK" == "$2" ]] && {
+                cursor="CRSR:$((${#file_data[y-1]}-1)) $((y-1))"
+        }
+
+        undo_stack=( "<--UNDO_BLOCK-->" \
+                     "ACTN:$action" \
+                     "$cursor" \
+                     "$data" \
+                     "${undo_stack[@]}" )
+
+    }
+
+    (( mergeable_block==1 )) && {
+        
+        [[ "INS DEL" == *$action* ]] && {
+            undo_stack[3]+=$2
+        }
+
+        [[ "BCK" == "$action" ]] && {
+            undo_stack[2]="CRSR:$((x-1)) $y"
+            undo_stack[3]="DATA:$2${undo_stack[3]:5}"
+        }
+
+    }
+
+    # emptying redo stack
+    redo_stack=()
+}
+
+# Text Modification
+###############################################################################
+insert_character() {
+    # Add event to undo stack
+    add_block_to_stack "INS" "$1"
+    file_data[$y]="${file_data[y]::x}$1${file_data[y]:x}"
+    ((x++))
+    prev_x=$x
+}
+
+line_break() {
+    # Add event to undo stack
+    add_block_to_stack "L_B"
 
     # Inserting additional line
     file_data=( "${file_data[@]::y}" \
@@ -361,7 +624,7 @@ insert_newline () {
 
     ((y++))
     ((x=0))
-    ((curr_x=0))
+    ((prev_x=0))
     ((total_lines++))
 
     # Incase newline is invoked at the bottom of the scroll region
@@ -379,18 +642,21 @@ insert_newline () {
         draw_line
         printf '\e[1L'
         draw_line "$((y-1))"
-        ((scroll_y++))
+        #((scroll_y++))
     }
 }
 
-bckspc () {
+back_space() {
 
     # If backspace is used at the start of the line
     (( x == 0 )) && {
         (( y < 1 )) && return;
 
+        # Add event to undo stack
+        add_block_to_stack "L_J" "BCK"
+
         ((x=${#file_data[y-1]}-1))
-        ((curr_x=${#file_data[y-1]}-1))
+        ((prev_x=${#file_data[y-1]}-1))
 
         file_data=( "${file_data[@]::y-1}" \
                     "${file_data[y-1]::-1}${file_data[y]}" \
@@ -422,11 +688,13 @@ bckspc () {
 
     # If backspace is used anywhere else
     (( x > 0 )) && {
+        # Add event to undo stack
+        add_block_to_stack "BCK" "${file_data[y]:x-1:1}"
 
         file_data[y]="${file_data[y]::x-1}${file_data[y]:x}"
 
         ((x--))
-        ((curr_x=x))
+        ((prev_x=x))
         printf '\e2K'
         draw_line
         return
@@ -434,13 +702,16 @@ bckspc () {
 
 }
 
-delete_key () {
+delete_character() {
 
     # if delete is used at the end of the line
     (( x == ${#file_data[y]}-1 )) && {
-        ((curr_x=x))
+        ((prev_x=x))
 
         (( y == total_lines-1 )) && return;
+
+        # Add event to undo stack
+        add_block_to_stack "L_J" "DEL"        
 
         file_data=( "${file_data[@]::y}" \
                     "${file_data[y]::-1}${file_data[y+1]}" \
@@ -470,9 +741,13 @@ delete_key () {
 
     # if delete is used anywhere else
     (( x < ${#file_data[y]}-1 )) && {
+        
+        # Add event to undo stack
+        add_block_to_stack "DEL" "${file_data[y]:x:1}"
+
         file_data[y]="${file_data[y]::x}${file_data[y]:x+1}"
 
-        ((curr_x=x))
+        ((prev_x=x))
         printf '\e2K'
         draw_line
         return
@@ -607,7 +882,7 @@ key() {
         # Go up one page
         "${PGUP:=$'\E[5~'}")
             ((x=0))
-            ((curr_x=0))
+            ((prev_x=0))
 
             (( y != 0 )) && {
                 if (( y_start == 0 )); then
@@ -639,7 +914,7 @@ key() {
         # Go down one page
         "${PGDWN:=$'\E[6~'}")
             ((x=0))
-            ((curr_x=0))
+            ((prev_x=0))
 
             (( y != total_lines-1 )) && {
                 if (( y_end >= total_lines )); then
@@ -670,7 +945,7 @@ key() {
         # Move to start of line
         "${HOME_KEY:=$'\E[1~'}")
             ((x=0))
-            ((curr_x=0))
+            ((prev_x=0))
             draw_line
             sync_cursor
             status_line
@@ -679,7 +954,7 @@ key() {
         # Move to end of line
         "${END_KEY:=$'\E[4~'}")
             ((x=${#file_data[y]}))
-            ((curr_x=${#file_data[y]}))
+            ((prev_x=${#file_data[y]}))
             draw_line
             sync_cursor
             status_line
@@ -690,7 +965,7 @@ key() {
 
         # TO instert a newline in the text
         "${NEWLINE:=""}")
-            insert_newline
+            line_break
             sync_cursor
 
             MODIFIED=1
@@ -700,7 +975,7 @@ key() {
         # Backspace to remove a character before the cursor
         "${BCKSPC1:=$'\b'}"|\
         "${BCKSPC2:=$'\177'}")
-            bckspc
+            back_space
             sync_cursor
             MODIFIED=1
             status_line
@@ -708,7 +983,7 @@ key() {
 
         # Delete key to remove the character under the cursor
         "${DELETE_KEY:=$'\e[3~'}")
-            delete_key
+            delete_character
             sync_cursor
             MODIFIED=1
 
@@ -731,16 +1006,43 @@ key() {
         # Editor Functionality
         #-=========================================
 
-        # F5 key to redraw the current screen
-        # Used for debug purposes
-        "${REDRAW:=$'\E[15~'}")
-            redraw
+        "${UNDO_KEY:=$'\Eu'}")
+            undo
+            sync_cursor
+            status_line
+        ;;
+
+        "${REDO_KEY:=$'\Er'}")
+            redo
+            sync_cursor
+            status_line
         ;;
 
         # Ctrl+x to quit
         "${QUIT_KEY:=$'\030'}")
             exit
         ;;
+
+        # DEBUG Functionality
+        #-=========================================
+
+        # F5 key to redraw the current screen
+        # Used for debug purposes
+        "${REDRAW:=$'\E[15~'}")
+            redraw
+        ;;
+
+        #!debug------------------------------------
+        # DUMP VALUES
+        $'\Ed')
+            printf "%s\n" \
+                    "UNDO_STACK--------------------"\
+                    "${undo_stack[@]}" \
+                    "REDO_STACK--------------------"\
+                    "${redo_stack[@]}" \
+                    "==============================">> BTE_DUMP
+        ;;
+        #!debug------------------------------------
 
     esac
 }
@@ -754,7 +1056,7 @@ init_vars() {
     #             within the terminal
     # scrol_y   : Denotes the ROW wise position of the cursor
     #             within the terminal
-    # curr_x    : This variable is used to denote the farthest the cursor
+    # prev_x    : This variable is used to denote the farthest the cursor
     #             has been from the right hand side of the terminal. This
     #             is used while moving up and down a line.
     #             (It gets overwritten when moving left or right)
@@ -770,10 +1072,14 @@ init_vars() {
     scroll_x=1
     scroll_y=1
 
-    curr_x=0
+    prev_x=0
 
     y_start=0
     y_end=$max_lines
+
+    mergeable_block=
+    undo_stack=()
+    redo_stack=()
 
     MODIFIED=0
 }
