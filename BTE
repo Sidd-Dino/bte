@@ -9,7 +9,7 @@
 # cos.... Why the fuck not?
 
 # Terminal Functions
-###############################################################################
+###################################################################################################
 setup_terminal() {
     #* Code yoinked from fff( https://github.com/dylanaraps/fff )
     # Setup the terminal for the TUI.
@@ -67,25 +67,25 @@ get_term_size() {
 }
 
 # BTE functions
-###############################################################################
+###################################################################################################
 status_line() {
-    # '\e7'        Save cursor position.
-    #              This is more widely supported than '\e[s'.
-    # '\e[%sH'     Move cursor to bottom of the terminal.
-    # '\e[30;41m'  Set foreground and background colors.
-    # '%*s'        Insert enough spaces to fill the screen width.
-    #              This sets the background color to the whole line
-    #              and fixes issues in 'screen' where '\e[K' doesn't work.
-    # '\r'         Move cursor back to column 0 (was at EOL due to above).
-    # '\e[m'       Reset text formatting.
-    # '\e[%sH\e[K' Clear line below status_line.
-    # '\e8'        Restore cursor position.
-    #              This is more widely supported than '\e[u'.
+    # '\e7'        : Save cursor position.
+    #                This is more widely supported than '\e[s'.
+    # '\e[%sH'     : Move cursor to bottom of the terminal.
+    # '\e[30;41m'  : Set foreground and background colors.
+    # '%*s'        : Insert enough spaces to fill the screen width.
+    #                This sets the background color to the whole line
+    #                and fixes issues in 'screen' where '\e[K' doesn't work.
+    # '\r'         : Move cursor back to column 0 (was at EOL due to above).
+    # '\e[m'       : Reset text formatting.
+    # '\e[%sH\e[K' : Clear line below status_line.
+    # '\e8'        : Restore cursor position.
+    #                This is more widely supported than '\e[u'.
 
     printf "\e7\e[%sH\e[30;42m%*s\r%s\e[m\e[%sH\e[K\e8"\
             "$((LINES-1))" \
             "$COLUMNS" "" \
-            "Ln $((y+1)), Col $((x+1))"\
+            "Ln $((file_line+1)), Col $((file_column+1))"\
             "$LINES"
 
 }
@@ -93,7 +93,7 @@ status_line() {
 draw_line() {
     # BTE doesnt wrap lines. Hence it has to
     # display part of a line depending on the
-    # x position.
+    # file_column position.
     #
     # There are 4 possible cases that need to be handled
     # to display a line properly.
@@ -114,21 +114,21 @@ draw_line() {
     # Case II:
     #       The length of the line is greater than the
     #       COLUMNS and
-    #       The x position of at which the cursor is ,
+    #       The file_column position of at which the cursor is ,
     #       is smaller than (COLUMNS-2).
     #
     # Case III:
     #       The length of the line is greater than the
-    #       terminal width and the x position is somewhere
+    #       terminal width and the file_column position is somewhere
     #       in the middle of the line
     #
     # Case IV:
     #       The length of the line is greater than the
-    #       terminal width but the x position is near
+    #       terminal width but the file_column position is near
     #       the end of the line
     #
 
-    local curr=$y
+    local curr=$file_line
 
     [[ -n $1 ]] && {
         curr=$*
@@ -144,47 +144,46 @@ draw_line() {
         printf "%s" "${file_data[curr]}"
 
     # Case II
-    elif (( curr != y || x < (COLUMNS-2) )); then
+    elif (( curr != file_line || file_column < (COLUMNS-2) )); then
             printf "%s\e[30;41m%s\e[m" \
                     "${file_data[curr]:0:$((COLUMNS-1))}"\
                     ">"
     else
-        local p=$(( (x-COLUMNS+2) / (COLUMNS-5) ))
-        local x_start=$(( ( p*(COLUMNS-5) )+(COLUMNS-2) ))
-        local x_end=$(( x_start+COLUMNS-5 ))
+        local p=$(( (file_column-COLUMNS+2) / (COLUMNS-5) ))
+        local line_break_start=$(( ( p*(COLUMNS-5) )+(COLUMNS-2) ))
+        local line_break_end=$(( x_start+COLUMNS-5 ))
 
         # Case III
         if (( ${#file_data[curr]} < x_end )); then
             printf "\e[30;41m%s\e[m%s" \
                     "<" \
-                    "${file_data[curr]:$((x_start-2)):$x_end}"
+                    "${file_data[curr]:$((line_break_start-2)):$line_break_end}"
 
         # Case IV
         else
             printf "\e[30;41m%s\e[m%s\e[30;41m%s\e[m" \
                     "<" \
-                    "${file_data[curr]:$((x_start-2)):$((x_end+1))}" \
+                    "${file_data[curr]:$((line_break_start-2)):$((line_break_end+1))}" \
                     ">"
         fi
     fi
 }
 
 draw_page() {
-    local old_max_lines=$((y_end-y_start))
+    local old_max_lines=$((page_end-page_start))
     local diff=$((max_lines-old_max_lines))
 
     # Screen size has decreased
     if (( diff < 0 )); then
         # If the cursor postition is within the scrolling area
-        (( scroll_y <= max_lines )) && {
-            y_end=$((max_lines+y_start))
+        (( terminal_row <= max_lines )) && {
+            page_end=$((max_lines+page_start))
         }
 
         # If the cursor position is outside of the scrolling area
-        (( scroll_y > max_lines )) && {
-            #scroll_y=$((max_lines))
-            y_end=$((y+1))
-            y_start=$((y_end-max_lines))
+        (( terminal_row > max_lines )) && {
+            page_end=$((file_line+1))
+            page_start=$((page_end-max_lines))
         }
 
     # Screen size has increased
@@ -192,74 +191,76 @@ draw_page() {
 
         # If the files length is bigger than scroll area
         (( total_lines > max_lines )) && {
-            local top_offset=$((diff/2))
-            local bot_offset=$(( (diff/2)+(diff%2) ))
-
             # The code below attempts to display the previously
             # visible lines in the middle of the scroll area
             # with the remaining space filled with available
             # lines from file
 
+            # top_offset : The number of lines that will be added to
+            #              the top of the previously displayed lines
+            # bot_offset : The number of lines that will be added to
+            #              the bottom of the previously displayed lines
+
+            local top_offset=$((diff/2))
+            local bot_offset=$(( (diff/2)+(diff%2) ))
+
             # If there arent enough lines in the file above
-            # y_start to cover the top region
-            if (( y_start <= top_offset )); then
-                y_start=0
-                y_end=$((y_end+top_offset))
+            # page_start to cover the top region
+            if (( page_start <= top_offset )); then
+                page_start=0
+                page_end=$((page_end+top_offset))
 
             # If there are enough lines in the file above
-            # y_start to cover the top region
+            # page_start to cover the top region
             else
-                y_start=$((y_start-top_offset))
+                page_start=$((page_start-top_offset))
             fi
 
-            y_end=$((y_end+bot_offset))
-
-            #scroll_y=$((y-y_start+1))
+            page_end=$((page_end+bot_offset))
         }
 
         # If the files length is smaller than scroll area
         (( total_lines <= max_lines )) && {
-            y_start=0
-            y_end=$((max_lines))
-            #scroll_y=$((y+1))
+            page_start=0
+            page_end=$((max_lines))
         }
     fi
 
 
-    for ((i=y_start;i<y_end;i++)); do
+    for ((i=page_start;i<page_end;i++)); do
             draw_line "$i"
-            (( i+1 < y_end )) && printf "\n"
+            (( i+1 < page_end )) && printf "\n"
     done
 }
 
 sync_cursor() {
-    # Sync Y position
-    scroll_y=$((y-y_start+1))
+    # Sync terminal_row position
+    terminal_row=$((file_line-page_start+1))
 
-    # Sync X position
-    # If prev_x is greater than the length of the current y'th line
-    # The value of x is set to the end of the line
-    if (( prev_x >= ${#file_data[y]} )); then
-        x=$((${#file_data[y]}-1))
+    # file_column value check
+    # If prev_line_column is greater than the length of the current file_line.
+    # The value of file_column is set to the end of the line
+    if (( prev_line_column >= ${#file_data[file_line]} )); then
+        file_column=$((${#file_data[file_line]}-1))
 
-    # If prev_x is smaller than or equal to the length
-    # of the current y'th line
+    # If prev_line_column is smaller than or equal to the length
+    # of the current file_line'th line
     else
-        x=$prev_x
+        file_column=$prev_line_column
     fi
 
-    if (( x < (COLUMNS-2) || ${#file_data[y]} <= COLUMNS )); then
-        scroll_x=$((x+1))
+    if (( file_column < (COLUMNS-2) || ${#file_data[file_line]} <= COLUMNS )); then
+        terminal_column=$((file_column+1))
     else
-        local p=$(( (x-COLUMNS+2) / (COLUMNS-5) ))
+        local p=$(( (file_column-COLUMNS+2) / (COLUMNS-5) ))
         local x_start=$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))
         local x_end=$(( x_start+COLUMNS-5 ))
 
-        scroll_x=$(( x-x_start+4 ))
+        terminal_column=$(( file_column-x_start+4 ))
     fi
 
-    # move cursor to position scroll_x,scroll_y
-    printf '\e[%s;%sH' "$scroll_y" "$scroll_x"
+    # move cursor to position terminal_column,terminal_row
+    printf '\e[%s;%sH' "$terminal_row" "$terminal_column"
 
 }
 
@@ -271,25 +272,27 @@ redraw() {
 }
 
 # Text Navigation
-###############################################################################
+###################################################################################################
 move_up() {
     # '\e[1L' : Insert a line above the cursor.
     # '\e[A'  : Move cursor up a line.
     # '\e[2K' : Clear current line
-    (( y >= 1 )) && {
-        x=0
+
+    # If cursor isn't at the top of the file move up
+    (( file_line > 0 )) && {
+        # redraw current line from the beginning 
+        file_column=0
         draw_line
-        x=$prev_x
+        file_column=$prev_line_column
 
-        ((y--))
+        ((file_line--))
 
-        if (( scroll_y > 1 )); then
-            #((scroll_y--))
+        if (( terminal_row > 1 )); then
             printf '\e[A\e2K'
         else
             printf '\e[1L'
-            ((y_start--))
-            ((y_end--))
+            ((page_start--))
+            ((page_end--))
         fi
 
         draw_line
@@ -301,20 +304,22 @@ move_up() {
 move_down() {
     # '\e[B'  : Move cursor down a line.
     # '\e[2K' : Clear current line
-    (( y+1 < total_lines )) && {
-        x=0
+
+    # If cursor isn't at the bottom of the file move down
+    (( file_line+1 < total_lines )) && {
+        # redraw current line from the beginning 
+        file_column=0
         draw_line
-        x=$prev_x
+        file_column=$prev_line_column
 
-        ((y++))
+        ((file_line++))
 
-        if (( scroll_y < max_lines )); then
-            #((scroll_y++))
+        if (( terminal_row < max_lines )); then
             printf '\e[B\e[2K'
         else
             printf '\n'
-            ((y_start++))
-            ((y_end++))
+            ((page_start++))
+            ((page_end++))
         fi
 
         draw_line
@@ -324,44 +329,46 @@ move_down() {
 }
 
 move_left() {
-    if (( x > 0 )); then
-        ((x--))
-        prev_x=$x
+    if (( file_column > 0 )); then
+        ((file_column--))
+        prev_line_column=$file_column
         draw_line
         sync_cursor
         status_line
     else
-        x=$(( ${#file_data[y-1]}-1 ))
-        prev_x=$x
+        file_column=$(( ${#file_data[file_line-1]}-1 ))
+        prev_line_column=$file_column
         move_up
     fi
 }
 
 move_right() {
-    if (( x+1 < ${#file_data[y]} )); then
-        ((x++))
-        prev_x=$x
+    if (( file_column+1 < ${#file_data[file_line]} )); then
+        ((file_column++))
+        prev_line_column=$file_column
         draw_line
         sync_cursor
         status_line
-    elif (( y+1 < total_lines )); then
-        x=0
-        prev_x=$x
+    elif (( file_line+1 < total_lines )); then
+        file_column=0
+        prev_line_column=$file_column
         move_down
     fi
 }
 
 # Undo/Redo Stack Function
-###############################################################################
+###################################################################################################
 undo() {
     
     (( ${#undo_stack} == 0 )) && {
         return
     }
 
+    (( modified=1 ))
+
     # Variables to store top most block
     local action
-    local blk_x_coord blk_y_coord
+    local block_column block_row
     local data
 
 
@@ -369,7 +376,7 @@ undo() {
     action=${undo_stack[1]:5}
 
     old_IFS=$IFS
-    IFS=" " read -rs blk_x_coord blk_y_coord <<< "${undo_stack[2]:5}"
+    IFS=" " read -rs block_column block_row <<< "${undo_stack[2]:5}"
     IFS=$old_IFS
 
     data=${undo_stack[3]:5}
@@ -377,45 +384,45 @@ undo() {
     # Undo said action
     case "$action" in
         "INS")
-            local fore="${file_data[blk_y_coord]::blk_x_coord}"
-            local aft="${file_data[blk_y_coord]:blk_x_coord+${#data}}"
-            file_data[blk_y_coord]="$fore$aft"
-            ((x=blk_x_coord))
-            ((y=blk_y_coord))
+            local fore="${file_data[block_row]::block_column}"
+            local aft="${file_data[block_row]:block_column+${#data}}"
+            file_data[block_row]="$fore$aft"
+            ((file_column=block_column))
+            ((file_line=block_row))
         ;;
 
         "DEL"|\
         "BCK")
-            local fore="${file_data[blk_y_coord]::blk_x_coord}"
-            local aft="${file_data[blk_y_coord]:blk_x_coord}"
-            file_data[blk_y_coord]="$fore$data$aft"
-            ((x=${#fore}+${#data}))
-            ((y=blk_y_coord))
+            local fore="${file_data[block_row]::block_column}"
+            local aft="${file_data[block_row]:block_column}"
+            file_data[block_row]="$fore$data$aft"
+            ((file_column=${#fore}+${#data}))
+            ((file_line=block_row))
         ;;
 
         "L_B")
             file_data=(
-                "${file_data[@]::blk_y_coord}" \
-                "${file_data[blk_y_coord]::-1}${file_data[blk_y_coord+1]}" \
-                "${file_data[@]:blk_y_coord+2}" \
+                "${file_data[@]::block_row}" \
+                "${file_data[block_row]::-1}${file_data[block_row+1]}" \
+                "${file_data[@]:block_row+2}" \
             )
-            ((x=blk_x_coord))
-            ((y=blk_y_coord))
+            ((file_column=block_column))
+            ((file_line=block_row))
         ;;
 
         "L_J")
             file_data=(
-                "${file_data[@]::blk_y_coord}"
-                "${file_data[blk_y_coord]::blk_x_coord} "
-                "${file_data[blk_y_coord]:blk_x_coord}"
-                "${file_data[@]:blk_y_coord+1}"
+                "${file_data[@]::block_row}"
+                "${file_data[block_row]::block_column} "
+                "${file_data[block_row]:block_column}"
+                "${file_data[@]:block_row+1}"
             )
-            ((x=0))
-            ((y=blk_y_coord+1))
+            ((file_column=0))
+            ((file_line=block_row+1))
         ;;
     esac
 
-    ((prev_x=x))
+    ((prev_line_column=file_column))
 
     # popping block from undo_stack
     undo_stack=("${undo_stack[@]:4}")
@@ -424,17 +431,17 @@ undo() {
     redo_stack=( 
         "<--REDO_BLOCK-->"
         "ACTN:$action"
-        "CRSR:$blk_x_coord $blk_y_coord"
+        "CRSR:$block_column $block_row"
         "DAYA:$data"
         "${redo_stack[@]}"
     )
 
 
     # display
-    if (( y_start > y || y_end <= y )); then
-        local p=$((y/max_lines))
-        y_start=$((p*max_lines))
-        y_end=$((y_start+max_lines))
+    if (( page_start > file_line || page_end <= file_line )); then
+        local p=$((file_line/max_lines))
+        page_start=$((p*max_lines))
+        page_end=$((page_start+max_lines))
     fi
 
     redraw
@@ -448,7 +455,7 @@ redo() {
 
     # Variables to store top most block
     local action
-    local blk_x_coord blk_y_coord
+    local block_column block_row
     local data
 
 
@@ -456,7 +463,7 @@ redo() {
     action=${redo_stack[1]:5}
 
     old_IFS=$IFS
-    IFS=" " read -rs blk_x_coord blk_y_coord <<< "${redo_stack[2]:5}"
+    IFS=" " read -rs block_column block_row <<< "${redo_stack[2]:5}"
     IFS=$old_IFS
 
     data=${redo_stack[3]:5}
@@ -464,45 +471,45 @@ redo() {
     # Undo said action
     case "$action" in
         "INS")
-            local fore="${file_data[blk_y_coord]::blk_x_coord}"
-            local aft="${file_data[blk_y_coord]:blk_x_coord}"
-            file_data[blk_y_coord]="$fore$data$aft"
-            ((x=${#fore}+${#data}))
-            ((y=blk_y_coord))
+            local fore="${file_data[block_row]::block_column}"
+            local aft="${file_data[block_row]:block_column}"
+            file_data[block_row]="$fore$data$aft"
+            ((file_column=${#fore}+${#data}))
+            ((file_line=block_row))
         ;;
 
         "DEL"|\
         "BCK")
-            local fore="${file_data[blk_y_coord]::blk_x_coord}"
-            local aft="${file_data[blk_y_coord]:blk_x_coord+${#data}}"
-            file_data[blk_y_coord]="$fore$aft"
-            ((x=blk_x_coord))
-            ((y=blk_y_coord))
+            local fore="${file_data[block_row]::block_column}"
+            local aft="${file_data[block_row]:block_column+${#data}}"
+            file_data[block_row]="$fore$aft"
+            ((file_column=block_column))
+            ((file_line=block_row))
         ;;
 
         "L_B")
             file_data=(
-                "${file_data[@]::blk_y_coord}"
-                "${file_data[blk_y_coord]::blk_x_coord} "
-                "${file_data[blk_y_coord]:blk_x_coord}"
-                "${file_data[@]:blk_y_coord+1}"
+                "${file_data[@]::block_row}"
+                "${file_data[block_row]::block_column} "
+                "${file_data[block_row]:block_column}"
+                "${file_data[@]:block_row+1}"
             )
-            ((x=0))
-            ((y=blk_y_coord+1))
+            ((file_column=0))
+            ((file_line=block_row+1))
         ;;
 
         "L_J")
             file_data=(
-                "${file_data[@]::blk_y_coord}" \
-                "${file_data[blk_y_coord]::-1}${file_data[blk_y_coord+1]}" \
-                "${file_data[@]:blk_y_coord+2}" \
+                "${file_data[@]::block_row}" \
+                "${file_data[block_row]::-1}${file_data[block_row+1]}" \
+                "${file_data[@]:block_row+2}" \
             )
-            ((x=blk_x_coord))
-            ((y=blk_y_coord))
+            ((file_column=block_column))
+            ((file_line=block_row))
         ;;
     esac
 
-    ((prev_x=x))
+    ((prev_line_column=file_column))
 
     # popping block from redo_stack
     redo_stack=("${redo_stack[@]:4}")
@@ -511,17 +518,17 @@ redo() {
     undo_stack=( 
         "<--REDO_BLOCK-->"
         "ACTN:$action"
-        "CRSR:$blk_x_coord $blk_y_coord"
+        "CRSR:$block_column $block_row"
         "DAYA:$data"
         "${undo_stack[@]}"
     )
 
 
     # display
-    (( y_start > y || y_end <= y )) && {
-        local p=$((y/max_lines))
-        y_start=$((p*max_lines))
-        y_end=$((y_start+max_lines))
+    (( page_start > file_line || page_end <= file_line )) && {
+        local p=$((file_line/max_lines))
+        page_start=$((p*max_lines))
+        page_end=$((page_start+max_lines))
     }
 
     redraw
@@ -538,12 +545,12 @@ mergeable_block_check() {
         return
     }
 
-    [[ "BCK DEL" == *$1* && ${undo_stack[2]:5} == "$x $y" ]] && {
+    [[ "BCK DEL" == *$1* && ${undo_stack[2]:5} == "$file_column $file_line" ]] && {
         ((mergeable_block=1))
     }
 
     [[ "INS" == "$1" && \
-        ${undo_stack[2]:5} == "$((x-${#undo_stack[3]}+5)) $y" ]] && {
+       ${undo_stack[2]:5} == "$((file_column-${#undo_stack[3]}+5)) $file_line" ]] && {
         ((mergeable_block=1))
     }
 
@@ -561,7 +568,7 @@ add_block_to_stack() {
     mergeable_block_check "$action"
 
     (( mergeable_block==0 )) && {
-        local cursor="CRSR:$x $y"
+        local cursor="CRSR:$file_column $file_line"
         local data="DATA:"
 
         [[ "INS DEL" == *$action* ]] && {
@@ -569,12 +576,12 @@ add_block_to_stack() {
         }
 
         [[ "BCK" == "$action" ]] && {
-            cursor="CRSR:$((x-1)) $y"
+            cursor="CRSR:$((file_column-1)) $file_line"
             data+="$2"
         }
 
         [[ "L_J" == "$action" && "BCK" == "$2" ]] && {
-                cursor="CRSR:$((${#file_data[y-1]}-1)) $((y-1))"
+                cursor="CRSR:$((${#file_data[file_line-1]}-1)) $((file_line-1))"
         }
 
         undo_stack=( "<--UNDO_BLOCK-->" \
@@ -592,7 +599,7 @@ add_block_to_stack() {
         }
 
         [[ "BCK" == "$action" ]] && {
-            undo_stack[2]="CRSR:$((x-1)) $y"
+            undo_stack[2]="CRSR:$((file_column-1)) $file_line"
             undo_stack[3]="DATA:$2${undo_stack[3]:5}"
         }
 
@@ -603,13 +610,15 @@ add_block_to_stack() {
 }
 
 # Text Modification
-###############################################################################
+###################################################################################################
 insert_character() {
     # Add event to undo stack
     add_block_to_stack "INS" "$1"
-    file_data[$y]="${file_data[y]::x}$1${file_data[y]:x}"
-    ((x++))
-    prev_x=$x
+    local fore="${file_data[file_line]::file_column}"
+    local aft="${file_data[file_line]:file_column}"
+    file_data[$file_line]="$fore$1$aft"
+    ((file_column++))
+    prev_line_column=$file_column
 }
 
 line_break() {
@@ -617,20 +626,20 @@ line_break() {
     add_block_to_stack "L_B"
 
     # Inserting additional line
-    file_data=( "${file_data[@]::y}" \
-                "${file_data[y]::x} " \
-                "${file_data[y]:x}" \
-                "${file_data[@]:y+1}" )
+    file_data=( "${file_data[@]::file_line}" \
+                "${file_data[file_line]::file_column} " \
+                "${file_data[file_line]:file_column}" \
+                "${file_data[@]:file_line+1}" )
 
-    ((y++))
-    ((x=0))
-    ((prev_x=0))
+    ((file_line++))
+    ((file_column=0))
+    ((prev_line_column=0))
     ((total_lines++))
 
     # Incase newline is invoked at the bottom of the scroll region
     # push everything up one line and print the generated newline
-    (( scroll_y == max_lines )) && {
-        draw_line "$((y-1))"
+    (( terminal_row == max_lines )) && {
+        draw_line "$((file_line-1))"
         printf '\n'
         draw_line
     }
@@ -638,48 +647,47 @@ line_break() {
     # Incase newline is invoked anywhere else in the scroll region
     # push everything below the cursor down one line
     # and print the generated newline
-    (( scroll_y < max_lines )) && {
+    (( terminal_row < max_lines )) && {
         draw_line
         printf '\e[1L'
-        draw_line "$((y-1))"
-        #((scroll_y++))
+        draw_line "$((file_line-1))"
     }
 }
 
 back_space() {
 
     # If backspace is used at the start of the line
-    (( x == 0 )) && {
-        (( y < 1 )) && return;
+    (( file_column == 0 )) && {
+        (( file_line < 1 )) && return;
 
         # Add event to undo stack
         add_block_to_stack "L_J" "BCK"
 
-        ((x=${#file_data[y-1]}-1))
-        ((prev_x=${#file_data[y-1]}-1))
+        ((file_column=${#file_data[file_line-1]}-1))
+        ((prev_line_column=${#file_data[file_line-1]}-1))
 
-        file_data=( "${file_data[@]::y-1}" \
-                    "${file_data[y-1]::-1}${file_data[y]}" \
-                    "${file_data[@]:y+1}" )
+        file_data=( "${file_data[@]::file_line-1}" \
+                    "${file_data[file_line-1]::-1}${file_data[file_line]}" \
+                    "${file_data[@]:file_line+1}" )
 
-        ((y--))
+        ((file_line--))
         ((total_lines--))
 
         # If used on the first line of the terminal
-        (( scroll_y == 1 )) && {
+        (( terminal_row == 1 )) && {
             printf '\e2K'
             draw_line
         }
 
         # If used anywhere else. The content below the line
         # where the cursor is would need to be shifted up a line
-        (( scroll_y > 1 )) && {
-            ((scroll_y--))
+        (( terminal_row > 1 )) && {
+            ((terminal_row--))
             printf '\e[A'
 
-            for ((i=0; i<=max_lines-scroll_y; i++)); do
-                draw_line "$((y+i))"
-                (( i < max_lines-scroll_y )) && printf "\n"
+            for ((i=0; i<=max_lines-terminal_row; i++)); do
+                draw_line "$((file_line+i))"
+                (( i < max_lines-terminal_row )) && printf "\n"
             done
         }
 
@@ -687,14 +695,17 @@ back_space() {
     }
 
     # If backspace is used anywhere else
-    (( x > 0 )) && {
+    (( file_column > 0 )) && {
         # Add event to undo stack
-        add_block_to_stack "BCK" "${file_data[y]:x-1:1}"
+        add_block_to_stack "BCK" "${file_data[file_line]:file_column-1:1}"
 
-        file_data[y]="${file_data[y]::x-1}${file_data[y]:x}"
+        local prev="${file_data[file_line]::file_column-1}"
+        local aft="${file_data[file_line]:file_column}"
 
-        ((x--))
-        ((prev_x=x))
+        file_data[file_line]="$prev$aft"
+
+        ((file_column--))
+        ((prev_line_column=file_column))
         printf '\e2K'
         draw_line
         return
@@ -705,34 +716,34 @@ back_space() {
 delete_character() {
 
     # if delete is used at the end of the line
-    (( x == ${#file_data[y]}-1 )) && {
-        ((prev_x=x))
+    (( file_column == ${#file_data[file_line]}-1 )) && {
+        ((prev_line_column=file_column))
 
-        (( y == total_lines-1 )) && return;
+        (( file_line == total_lines-1 )) && return;
 
         # Add event to undo stack
         add_block_to_stack "L_J" "DEL"        
 
-        file_data=( "${file_data[@]::y}" \
-                    "${file_data[y]::-1}${file_data[y+1]}" \
-                    "${file_data[@]:y+2}" )
+        file_data=( "${file_data[@]::file_line}" \
+                    "${file_data[file_line]::-1}${file_data[file_line+1]}" \
+                    "${file_data[@]:file_line+2}" )
 
         ((total_lines--))
 
         # if used at the last line of the scroll region
-        (( scroll_y == max_lines )) && {
+        (( terminal_row == max_lines )) && {
             printf '\e2K'
             draw_line
         }
 
         # If used anywhere else. The content below the line
         # where the cursor is would need to be shifted up a line
-        (( scroll_y < max_lines )) && {
+        (( terminal_row < max_lines )) && {
             printf '\e2K'
 
-            for ((i=0; i<=max_lines-scroll_y; i++)); do
-                draw_line "$((y+i))"
-                (( i < max_lines-scroll_y )) && printf "\n"
+            for ((i=0; i<=max_lines-terminal_row; i++)); do
+                draw_line "$((file_line+i))"
+                (( i < max_lines-terminal_row )) && printf "\n"
             done
         }
 
@@ -740,14 +751,17 @@ delete_character() {
     }
 
     # if delete is used anywhere else
-    (( x < ${#file_data[y]}-1 )) && {
+    (( file_column < ${#file_data[file_line]}-1 )) && {
         
         # Add event to undo stack
-        add_block_to_stack "DEL" "${file_data[y]:x:1}"
+        add_block_to_stack "DEL" "${file_data[file_line]:file_column:1}"
 
-        file_data[y]="${file_data[y]::x}${file_data[y]:x+1}"
+        local fore="${file_data[file_line]::file_column}"
+        local aft="${file_data[file_line]:file_column+1}"
 
-        ((prev_x=x))
+        file_data[file_line]="$fore$aft"
+
+        ((prev_line_column=file_column))
         printf '\e2K'
         draw_line
         return
@@ -755,7 +769,7 @@ delete_character() {
 }
 
 # File Handling
-###############################################################################
+###################################################################################################
 check_file() {
 
     local link_path
@@ -798,7 +812,7 @@ read_file() {
 }
 
 # Main Functions
-###############################################################################
+###################################################################################################
 key() {
     local special_keys
 
@@ -881,29 +895,27 @@ key() {
 
         # Go up one page
         "${PGUP:=$'\E[5~'}")
-            ((x=0))
-            ((prev_x=0))
+            ((file_column=0))
+            ((prev_line_column=0))
 
-            (( y != 0 )) && {
-                if (( y_start == 0 )); then
-                    ((y=0))
-                    ((scroll_y=1))
-                elif (( y_start >= max_lines )); then
-                    (( y_end=y_start ))
-                    (( y_start=y_start-max_lines ))
-                    (( y=y_start+scroll_y-1 ))
-                elif (( y_start <= max_lines )); then
-                    (( y_start=0 ))
-                    (( y_end=max_lines ))
+            (( file_line != 0 )) && {
+                if (( page_start == 0 )); then
+                    ((file_line=0))
+                elif (( page_start >= max_lines )); then
+                    (( page_end=page_start ))
+                    (( page_start=page_start-max_lines ))
+                    (( file_line=page_start+terminal_row-1 ))
+                elif (( page_start <= max_lines )); then
+                    (( page_start=0 ))
+                    (( page_end=max_lines ))
 
-                    (( y-max_lines < 0 )) && {
-                        (( y=0 ))
-                        (( scroll_y=1 ))
+                    (( file_line-max_lines < 0 )) && {
+                        (( file_line=0 ))
+                        (( terminal_row=1 ))
                     }
 
-                    (( y-max_lines >= 0 )) && {
-                        (( y=y-max_lines ))
-                        (( scroll_y=y+1 ))
+                    (( file_line-max_lines >= 0 )) && {
+                        (( file_line=file_line-max_lines ))
                     }
                 fi
 
@@ -913,28 +925,26 @@ key() {
 
         # Go down one page
         "${PGDWN:=$'\E[6~'}")
-            ((x=0))
-            ((prev_x=0))
+            ((file_column=0))
+            ((prev_line_column=0))
 
-            (( y != total_lines-1 )) && {
-                if (( y_end >= total_lines )); then
-                    (( y=total_lines-1 ))
-                    (( scroll_y=total_lines-y_start))
-                elif (( y_end+max_lines <= total_lines )); then
-                    (( y_start=y_end ))
-                    (( y_end=y_start+max_lines ))
-                    (( y=y+max_lines ))
+            (( file_line != total_lines-1 )) && {
+                if (( page_end >= total_lines )); then
+                    (( file_line=total_lines-1 ))
+                elif (( page_end+max_lines <= total_lines )); then
+                    (( page_start=page_end ))
+                    (( page_end=page_start+max_lines ))
+                    (( file_line=file_line+max_lines ))
                 else
-                    (( y_start=y_end ))
-                    (( y_end=y_start+max_lines ))
+                    (( page_start=page_end ))
+                    (( page_end=page_start+max_lines ))
 
-                    (( y_start+scroll_y-1 >= total_lines )) && {
-                        (( y=total_lines-1 ))
-                        (( scroll_y=total_lines-y_start))
+                    (( page_start+terminal_row-1 >= total_lines )) && {
+                        (( file_line=total_lines-1 ))
                     }
 
-                    (( y_start+scroll_y-1 < total_lines )) && {
-                        (( y=y_start+scroll_y-1 ))
+                    (( page_start+terminal_row-1 < total_lines )) && {
+                        (( file_line=page_start+terminal_row-1 ))
                     }
                 fi
 
@@ -944,8 +954,8 @@ key() {
 
         # Move to start of line
         "${HOME_KEY:=$'\E[1~'}")
-            ((x=0))
-            ((prev_x=0))
+            ((file_column=0))
+            ((prev_line_column=0))
             draw_line
             sync_cursor
             status_line
@@ -953,8 +963,8 @@ key() {
 
         # Move to end of line
         "${END_KEY:=$'\E[4~'}")
-            ((x=${#file_data[y]}))
-            ((prev_x=${#file_data[y]}))
+            ((file_column=${#file_data[file_line]}))
+            ((prev_line_column=${#file_data[file_line]}))
             draw_line
             sync_cursor
             status_line
@@ -968,7 +978,7 @@ key() {
             line_break
             sync_cursor
 
-            MODIFIED=1
+            modified=1
             status_line
         ;;
 
@@ -977,7 +987,7 @@ key() {
         "${BCKSPC2:=$'\177'}")
             back_space
             sync_cursor
-            MODIFIED=1
+            modified=1
             status_line
         ;;
 
@@ -985,7 +995,7 @@ key() {
         "${DELETE_KEY:=$'\e[3~'}")
             delete_character
             sync_cursor
-            MODIFIED=1
+            modified=1
 
             status_line
         ;;
@@ -999,7 +1009,7 @@ key() {
             printf '\e2K'
             draw_line
             sync_cursor
-            MODIFIED=1
+            modified=1
             status_line
         ;;
 
@@ -1018,7 +1028,7 @@ key() {
             status_line
         ;;
 
-        # Ctrl+x to quit
+        # Ctrl+file_column to quit
         "${QUIT_KEY:=$'\030'}")
             exit
         ;;
@@ -1050,38 +1060,44 @@ key() {
 init_vars() {
     # setting up variables for position within file
     #
-    # x         : Denotes the point at which the element is being modififed
-    # y         : Denotes which element in file_data is being modified
-    # scroll_x  : Denotes the COLUMN wise position of the cursor
-    #             within the terminal
-    # scrol_y   : Denotes the ROW wise position of the cursor
-    #             within the terminal
-    # prev_x    : This variable is used to denote the farthest the cursor
-    #             has been from the right hand side of the terminal. This
-    #             is used while moving up and down a line.
-    #             (It gets overwritten when moving left or right)
-    #             (Used in draw_page)
-    # y_start   : Denotes the y value of the line from which a page starts
-    # y_end     : Similar to y_start, y_end denotes the y value of the line
-    #             at the end of the page
-    # MODIFIED  : Acts as a flag to show if the file/buffer has been modified
-    #             in any way or form
+    # file_column      : Denotes the point at which the element is being modififed
+    # file_line        : Denotes which element in file_data is being modified
+    # terminal_column  : Denotes the COLUMN wise position of the cursor
+    #                    within the terminal
+    # terminal_row     : Denotes the ROW wise position of the cursor
+    #                    within the terminal
+    # prev_line_column : This variable is used to denote the farthest the cursor
+    #                    has been from the right hand side of the terminal. This
+    #                    is used while moving up and down a line.
+    #                    (It gets overwritten when moving left or right)
+    #                    (Used in draw_page)
+    # page_start       : Denotes the file_line value of the line from which a page starts
+    # page_end         : Similar to page_start, page_end denotes the file_line value of the line
+    #                    at the end of the page
+    # mergeable_block  : This variable acts as a flag for adding a new block to the top or merging
+    #                    the action/event to the top block of the undo stack.
+    #                    0 add a new block to the top of stack
+    #                    1 merge with top block
+    # undo_stack       : This array variable holds the undo blocks as a stack
+    # redo_stack       : This array variable holds the redo blocks as a stack
+    # modified         : Acts as a flag to show if the file/buffer has been modified
+    #                    in any way or form
 
-    x=0
-    y=0
-    scroll_x=1
-    scroll_y=1
+    file_column=0
+    file_line=0
+    terminal_column=1
+    terminal_row=1
 
-    prev_x=0
+    prev_line_column=0
 
-    y_start=0
-    y_end=$max_lines
+    page_start=0
+    page_end=$max_lines
 
     mergeable_block=
     undo_stack=()
     redo_stack=()
 
-    MODIFIED=0
+    modified=0
 }
 
 main() {

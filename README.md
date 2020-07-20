@@ -26,6 +26,7 @@ bash 4+
   - [ ] Pasting selected text
   - [ ] Searching text
   - [ ] Replacing text
+- [ ] Undo & Redo immplemented
 - [ ] Saving File
 - [ ] Opening a file from an empty buffer
 - [ ] Syntax Highlighting
