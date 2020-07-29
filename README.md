@@ -1,9 +1,11 @@
-# Bash Text Editor
 
-A text editor written in bash.
-Cos why the fuck not
+<p align="center"><img src="https://i.imgur.com/uw8gcOE.png" width="200px"></p>
+<h1 align="center">bash text editor</h1> <p
+align="center">A text editor written in bash.
+Cos why the fuck not</p>
 
-![screenshot](https://raw.github.com/Sidd-Dino/BTE/master/screenshot.png "screenshot")
+<p align="center"><img src="https://imgur.com/EcgFhMo.png"></p>
+
 
 ## Requirements
 ```
