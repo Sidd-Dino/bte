@@ -1,5 +1,5 @@
 
-<p align="center"><img src="https://i.imgur.com/uw8gcOE.png" width="200px"></p>
+<p align="center"><img src="https://imgur.com/8gdhpmv" width="200px"></p>
 <h1 align="center">bash text editor</h1> <p
 align="center">A text editor written in bash.
 Cos why the fuck not</p>
@@ -28,7 +28,7 @@ bash 4+
   - [ ] Pasting selected text
   - [ ] Searching text
   - [ ] Replacing text
-- [ ] Undo & Redo immplemented
+- [X] Undo & Redo immplemented
 - [ ] Saving File
 - [ ] Opening a file from an empty buffer
 - [ ] Syntax Highlighting
