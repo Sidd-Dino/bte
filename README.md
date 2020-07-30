@@ -1,5 +1,5 @@
 
-<p align="center"><img src="https://imgur.com/8gdhpmv" width="200px"></p>
+<p align="center"><img src="https://imgur.com/8gdhpmv.png" width="200px"></p>
 <h1 align="center">bash text editor</h1> <p
 align="center">A text editor written in bash.
 Cos why the fuck not</p>
