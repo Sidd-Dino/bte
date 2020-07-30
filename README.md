@@ -4,7 +4,7 @@
 align="center">A text editor written in bash.
 Cos why the fuck not</p>
 
-<p align="center"><img src="https://imgur.com/EcgFhMo.png"></p>
+<p align="center"><img src="https://imgur.com/dxvnKb0.png"></p>
 
 
 ## Requirements
