@@ -80,10 +80,15 @@ status_line() {
     # '\e8'        : Restore cursor position.
     #                This is more widely supported than '\e[u'.
 
-    printf "\e7\e[%sH\e[30;42m%*s\r%s\e[m\e[%sH\e[K\e8"\
-            "$((LINES-1))" \
-            "$COLUMNS" "" \
-            "Ln $((file_line+1)), Col $((file_column+1))"\
+    buffer_name="${file_name:-New Buffer}"
+    (( modified == 1 )) && buffer_name+="*"
+    counter="Ln $((file_line+1)), Col $((file_column+1))"
+
+    printf "\e7\e[%sH%s%*s%s\e[%sH\e[K\e8"\
+            "$((LINES-1))"\
+            "[$buffer_name]"\
+            "$((COLUMNS-${#buffer_name}-${#counter}-4))" ""\
+            "[$counter]"\
             "$LINES"
 
 }
@@ -398,6 +403,14 @@ undo() {
             ((file_line=block_row))
         ;;
 
+        "TAB")
+            local fore="${file_data[block_row]::block_column}"
+            local aft="${file_data[block_row]:block_column+4}"
+            file_data[block_row]="$fore$aft"
+            ((file_column=block_column))
+            ((file_line=block_row))
+        ;;
+
         "L_B")
             file_data=(
                 "${file_data[@]::block_row}" \
@@ -482,6 +495,14 @@ redo() {
             local aft="${file_data[block_row]:block_column+${#data}}"
             file_data[block_row]="$fore$aft"
             ((file_column=block_column))
+            ((file_line=block_row))
+        ;;
+
+        "TAB")
+            local fore="${file_data[block_row]::block_column}"
+            local aft="${file_data[block_row]:block_column}"
+            file_data[block_row]="$fore    $aft"
+            ((file_column=${#fore}+4))
             ((file_line=block_row))
         ;;
 
@@ -766,11 +787,53 @@ delete_character() {
     }
 }
 
+tab() {
+    # Add event to undo stack
+    add_block_to_stack "TAB"
+    local fore="${file_data[file_line]::file_column}"
+    local aft="${file_data[file_line]:file_column}"
+    file_data[$file_line]="$fore    $aft"
+    ((file_column+=4))
+    prev_line_column=$file_column
+}
 # File Handling
 ###################################################################################################
-check_file() {
+basename() {
+    #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
+    # Usage: basename "path" ["suffix"]
+    local tmp
 
-    local link_path
+    tmp=${1%"${1##*[!/]}"}
+    tmp=${tmp##*/}
+    tmp=${tmp%"${2/"$tmp"}"}
+
+    file_name="${tmp:-/}"
+}
+
+dirname() {
+    #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
+    # Usage: dirname "path"
+    local tmp=${1:-.}
+
+    [[ $tmp != *[!/]* ]] && {
+        file_path='/'
+        return
+    }
+
+    tmp=${tmp%%"${tmp##*[!/]}"}
+
+    [[ $tmp != */* ]] && {
+        file_path="$PWD/"
+        return
+    }
+
+    tmp=${tmp%/*}
+    tmp=${tmp%%"${tmp##*[!/]}"}
+
+    file_path="${tmp:-/}/"
+}
+
+check_file() {
 
     [[ ! -a "$*" ]] && printf "%s\n" "[ERR] File $* does not exist" && exit
 
@@ -778,19 +841,12 @@ check_file() {
 
     [[ -d $* ]] && printf "%s\n" "[ERR] File $* is a directory" && exit
 
-    [[ -h $* && -e $* ]] && {
-        link_path=$( readlink -f "$*" )
-        check_file "${link_path// /\\ }"
-        return
-    }
-
-    file=$( readlink -f "$*" )
 }
 
 read_file() {
 
     # Bash 4+
-    [[ -n $file ]] && mapfile -t file_data < "$file"
+    [[ -n $file_name ]] && mapfile -t file_data < "$file_path$file_name"
 
     (( ${#file_data[*]} == 0 )) && {
         file_data=( "" )
@@ -807,6 +863,15 @@ read_file() {
     for (( i=0;i<total_lines;i++ ));do
         file_data[$i]+=" "
     done
+}
+
+write_to_file() {
+    : >"$file_path${file_name:-BTE.txt}"
+
+    for line in "${file_data[@]}"; do echo "$line">>"$file_path$file_name"; done
+
+    modified=0
+    status_line
 }
 
 # Main Functions
@@ -997,6 +1062,16 @@ key() {
 
             status_line
         ;;
+        
+        # Tab key to add 4 spaces
+        "${TAB_KEY=$'\t'}")
+            tab
+            draw_line
+            sync_cursor
+            modified=1
+
+            status_line
+        ;;
 
         # A-Z , a-z , 0-9 and special charcters to insert into
         # the text
@@ -1023,6 +1098,11 @@ key() {
         "${REDO_KEY:=$'\Er'}")
             redo
             sync_cursor
+            status_line
+        ;;
+
+        "${WRITE_TO_FILE_KEY:=$'\017'}")
+            write_to_file
             status_line
         ;;
 
@@ -1081,6 +1161,11 @@ init_vars() {
     # modified         : Acts as a flag to show if the file/buffer has been modified
     #                    in any way or form
 
+    file_name=""
+    file_path="$PWD/"
+
+    file_data=( " " )
+
     file_column=0
     file_line=0
     terminal_column=1
@@ -1104,14 +1189,6 @@ main() {
         exit
     }
 
-    # Check to see of a file name has been passsed
-    if [[ -n $* ]]; then
-        check_file "$*"
-    fi
-
-    # load file onto array file_data
-    read_file
-
     # To stop read from waiting indefinetly for a character input
     read_flags=(-t 0.05)
 
@@ -1124,6 +1201,18 @@ main() {
     get_term_size
     init_vars
     setup_terminal
+
+    # Check to see of a file name has been passsed
+    if [[ -n $* ]]; then
+        check_file "$*"
+
+        dirname "$*"
+        basename "$*"
+        
+        # load file onto array file_data
+        read_file
+    fi  
+    
     redraw
 
     # Vintage infinite loop.

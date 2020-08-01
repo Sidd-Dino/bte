@@ -4,7 +4,7 @@
 align="center">A text editor written in bash.
 Cos why the fuck not</p>
 
-<p align="center"><img src="https://imgur.com/TE5l5eK.png"></p>
+<p align="center"><img src="https://imgur.com/0NXQVJw.png"></p>
 
 
 ## Requirements
@@ -12,7 +12,7 @@ Cos why the fuck not</p>
 bash 4+
 ```
 
-## Progress..?
+## Progress
 
 - [X] Loading file
 - [X] Basic text navigation
@@ -29,7 +29,7 @@ bash 4+
   - [ ] Searching text
   - [ ] Replacing text
 - [X] Undo & Redo immplemented
-- [ ] Saving File
+- [X] Saving File
 - [ ] Opening a file from an empty buffer
 - [ ] Syntax Highlighting
 
@@ -52,3 +52,6 @@ Ctrl+W      : Search a pattern
 Ctrl+O      : Save file
 Ctrl+X      : Quit the editor
 ```
+
+## Why i made it?
+This is just a passion I chose to do after being inspired by [fff](https://github.com/dylanaraps/fff). Thank you @dylanaraps ^u^
