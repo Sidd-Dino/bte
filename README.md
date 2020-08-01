@@ -47,10 +47,8 @@ Delete      : To delete the character under the cursor
 Meta+U      : Undo the most recent action
 Meta+R      : Redo an undone action
 
-Ctrl+W      : Search a pattern
-
-Ctrl+O      : Save file
-Ctrl+X      : Quit the editor
+Ctrl+O      : Write to file
+Ctrl+X      : Exit
 ```
 
 ## Why i made it?
