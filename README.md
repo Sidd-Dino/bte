@@ -15,7 +15,7 @@ bash 4+
 
 - [X] Loading file
 - [X] Basic text navigation
-- [ ] Complex text navigation
+- [X] Complex text navigation
   - [X] `PGUP` and `PGDWN` nav
   - [X] `HOME` , `END` nav
 - [X] Inserting characters
