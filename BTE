@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 #--------------------------#
-#  ████    ██████  ██████  #
-#  ██  ██    ██    ██      #
-#  ████      ██    ████    #
-#  ██  ██    ██    ██      #
-#  ████      ██    ██████  #
+#  ██      ██████  ██████  #
+#  ██████    ██    ████    #
+#  ██████    ██    ██████    #
 #__________________________#
-# Bash Text Editor
+# bash text editor
 # cos.... Why the fuck not?
 
 # Terminal Functions
@@ -359,280 +357,9 @@ move_right() {
     fi
 }
 
-# Undo/Redo Stack Function
-###################################################################################################
-undo() {
-    
-    (( ${#undo_stack} == 0 )) && {
-        return
-    }
-
-    (( modified=1 ))
-
-    # Variables to store top most block
-    local action
-    local block_column block_row
-    local data
-
-
-    # Read top block of undo stack
-    action=${undo_stack[1]:5}
-
-    old_IFS=$IFS
-    IFS=" " read -rs block_column block_row <<< "${undo_stack[2]:5}"
-    IFS=$old_IFS
-
-    data=${undo_stack[3]:5}
-
-    # Undo said action
-    case "$action" in
-        "INS")
-            local fore="${file_data[block_row]::block_column}"
-            local aft="${file_data[block_row]:block_column+${#data}}"
-            file_data[block_row]="$fore$aft"
-            ((file_column=block_column))
-            ((file_line=block_row))
-        ;;
-
-        "DEL"|\
-        "BCK")
-            local fore="${file_data[block_row]::block_column}"
-            local aft="${file_data[block_row]:block_column}"
-            file_data[block_row]="$fore$data$aft"
-            ((file_column=${#fore}+${#data}))
-            ((file_line=block_row))
-        ;;
-
-        "TAB")
-            local fore="${file_data[block_row]::block_column}"
-            local aft="${file_data[block_row]:block_column+4}"
-            file_data[block_row]="$fore$aft"
-            ((file_column=block_column))
-            ((file_line=block_row))
-        ;;
-
-        "L_B")
-            file_data=(
-                "${file_data[@]::block_row}" \
-                "${file_data[block_row]::-1}${file_data[block_row+1]}" \
-                "${file_data[@]:block_row+2}" \
-            )
-            ((file_column=block_column))
-            ((file_line=block_row))
-        ;;
-
-        "L_J")
-            file_data=(
-                "${file_data[@]::block_row}"
-                "${file_data[block_row]::block_column} "
-                "${file_data[block_row]:block_column}"
-                "${file_data[@]:block_row+1}"
-            )
-            ((file_column=0))
-            ((file_line=block_row+1))
-        ;;
-    esac
-
-    ((prev_line_column=file_column))
-
-    # popping block from undo_stack
-    undo_stack=("${undo_stack[@]:4}")
-
-    # pushing the popped block into redo stack 
-    redo_stack=( 
-        "<--REDO_BLOCK-->"
-        "ACTN:$action"
-        "CRSR:$block_column $block_row"
-        "DAYA:$data"
-        "${redo_stack[@]}"
-    )
-
-
-    # display
-    if (( page_start > file_line || page_end <= file_line )); then
-        local p=$((file_line/max_lines))
-        page_start=$((p*max_lines))
-        page_end=$((page_start+max_lines))
-    fi
-
-    redraw
-
-}
-
-redo() {
-    (( ${#redo_stack} == 0 )) && {
-        return
-    }
-
-    # Variables to store top most block
-    local action
-    local block_column block_row
-    local data
-
-
-    # Read top block of undo stack
-    action=${redo_stack[1]:5}
-
-    old_IFS=$IFS
-    IFS=" " read -rs block_column block_row <<< "${redo_stack[2]:5}"
-    IFS=$old_IFS
-
-    data=${redo_stack[3]:5}
-
-    # Undo said action
-    case "$action" in
-        "INS")
-            local fore="${file_data[block_row]::block_column}"
-            local aft="${file_data[block_row]:block_column}"
-            file_data[block_row]="$fore$data$aft"
-            ((file_column=${#fore}+${#data}))
-            ((file_line=block_row))
-        ;;
-
-        "DEL"|\
-        "BCK")
-            local fore="${file_data[block_row]::block_column}"
-            local aft="${file_data[block_row]:block_column+${#data}}"
-            file_data[block_row]="$fore$aft"
-            ((file_column=block_column))
-            ((file_line=block_row))
-        ;;
-
-        "TAB")
-            local fore="${file_data[block_row]::block_column}"
-            local aft="${file_data[block_row]:block_column}"
-            file_data[block_row]="$fore    $aft"
-            ((file_column=${#fore}+4))
-            ((file_line=block_row))
-        ;;
-
-        "L_B")
-            file_data=(
-                "${file_data[@]::block_row}"
-                "${file_data[block_row]::block_column} "
-                "${file_data[block_row]:block_column}"
-                "${file_data[@]:block_row+1}"
-            )
-            ((file_column=0))
-            ((file_line=block_row+1))
-        ;;
-
-        "L_J")
-            file_data=(
-                "${file_data[@]::block_row}" \
-                "${file_data[block_row]::-1}${file_data[block_row+1]}" \
-                "${file_data[@]:block_row+2}" \
-            )
-            ((file_column=block_column))
-            ((file_line=block_row))
-        ;;
-    esac
-
-    ((prev_line_column=file_column))
-
-    # popping block from redo_stack
-    redo_stack=("${redo_stack[@]:4}")
-
-    # pushing the popped block into undo stack 
-    undo_stack=( 
-        "<--REDO_BLOCK-->"
-        "ACTN:$action"
-        "CRSR:$block_column $block_row"
-        "DAYA:$data"
-        "${undo_stack[@]}"
-    )
-
-
-    # display
-    (( page_start > file_line || page_end <= file_line )) && {
-        local p=$((file_line/max_lines))
-        page_start=$((p*max_lines))
-        page_end=$((page_start+max_lines))
-    }
-
-    redraw
-}
-
-mergeable_block_check() {
-    ((mergeable_block=0))
-
-    (( ${#undo_stack} == 0 )) && {
-        return
-    }
-
-    [[ "${undo_stack[1]:5}" != "$1" ]] && {
-        return
-    }
-
-    [[ "BCK DEL" == *$1* && ${undo_stack[2]:5} == "$file_column $file_line" ]] && {
-        ((mergeable_block=1))
-    }
-
-    [[ "INS" == "$1" && \
-       ${undo_stack[2]:5} == "$((file_column-${#undo_stack[3]}+5)) $file_line" ]] && {
-        ((mergeable_block=1))
-    }
-
-}
-
-add_block_to_stack() {
-    # $1 :  This will hold ACTN
-    # $2 :  This will hold a secondary action for cases like a LINE JOIN 
-    #      invoked by DELETE or BACKSPACE
-    #       In other cases it will hold the charater needed to be stored
-    #      for ACTIONs like INSERT, BACKSPACE, DELETE
-
-    local action="$1"
-
-    mergeable_block_check "$action"
-
-    (( mergeable_block==0 )) && {
-        local cursor="CRSR:$file_column $file_line"
-        local data="DATA:"
-
-        [[ "INS DEL" == *$action* ]] && {
-            data+="$2"
-        }
-
-        [[ "BCK" == "$action" ]] && {
-            cursor="CRSR:$((file_column-1)) $file_line"
-            data+="$2"
-        }
-
-        [[ "L_J" == "$action" && "BCK" == "$2" ]] && {
-                cursor="CRSR:$((${#file_data[file_line-1]}-1)) $((file_line-1))"
-        }
-
-        undo_stack=( "<--UNDO_BLOCK-->" \
-                     "ACTN:$action" \
-                     "$cursor" \
-                     "$data" \
-                     "${undo_stack[@]}" )
-
-    }
-
-    (( mergeable_block==1 )) && {
-        
-        [[ "INS DEL" == *$action* ]] && {
-            undo_stack[3]+=$2
-        }
-
-        [[ "BCK" == "$action" ]] && {
-            undo_stack[2]="CRSR:$((file_column-1)) $file_line"
-            undo_stack[3]="DATA:$2${undo_stack[3]:5}"
-        }
-
-    }
-
-    # emptying redo stack
-    redo_stack=()
-}
-
 # Text Modification
 ###################################################################################################
 insert_character() {
-    # Add event to undo stack
-    add_block_to_stack "INS" "$1"
     local fore="${file_data[file_line]::file_column}"
     local aft="${file_data[file_line]:file_column}"
     file_data[$file_line]="$fore$1$aft"
@@ -641,8 +368,6 @@ insert_character() {
 }
 
 line_break() {
-    # Add event to undo stack
-    add_block_to_stack "L_B"
 
     # Inserting additional line
     file_data=( "${file_data[@]::file_line}" \
@@ -679,9 +404,6 @@ back_space() {
     (( file_column == 0 )) && {
         (( file_line < 1 )) && return;
 
-        # Add event to undo stack
-        add_block_to_stack "L_J" "BCK"
-
         ((file_column=${#file_data[file_line-1]}-1))
         ((prev_line_column=${#file_data[file_line-1]}-1))
 
@@ -715,8 +437,6 @@ back_space() {
 
     # If backspace is used anywhere else
     (( file_column > 0 )) && {
-        # Add event to undo stack
-        add_block_to_stack "BCK" "${file_data[file_line]:file_column-1:1}"
 
         local prev="${file_data[file_line]::file_column-1}"
         local aft="${file_data[file_line]:file_column}"
@@ -739,9 +459,6 @@ delete_character() {
         ((prev_line_column=file_column))
 
         (( file_line == total_lines-1 )) && return;
-
-        # Add event to undo stack
-        add_block_to_stack "L_J" "DEL"        
 
         file_data=( "${file_data[@]::file_line}" \
                     "${file_data[file_line]::-1}${file_data[file_line+1]}" \
@@ -771,9 +488,6 @@ delete_character() {
 
     # if delete is used anywhere else
     (( file_column < ${#file_data[file_line]}-1 )) && {
-        
-        # Add event to undo stack
-        add_block_to_stack "DEL" "${file_data[file_line]:file_column:1}"
 
         local fore="${file_data[file_line]::file_column}"
         local aft="${file_data[file_line]:file_column+1}"
@@ -788,8 +502,6 @@ delete_character() {
 }
 
 tab() {
-    # Add event to undo stack
-    add_block_to_stack "TAB"
     local fore="${file_data[file_line]::file_column}"
     local aft="${file_data[file_line]:file_column}"
     file_data[$file_line]="$fore    $aft"
