@@ -5,7 +5,7 @@ all:
 
 install:
 	@mkdir -p $(DESTDIR)$(PREFIX)/bin
-	@cp -p fff $(DESTDIR)$(PREFIX)/bin/bte
+	@cp -p bte $(DESTDIR)$(PREFIX)/bin/bte
 	@chmod 755 $(DESTDIR)$(PREFIX)/bin/bte
 
 uninstall:
