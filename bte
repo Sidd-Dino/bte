@@ -536,9 +536,8 @@ check_file() {
 }
 
 read_file() {
-
-    # Bash 4+
-    [[ -n $file_name ]] && mapfile -t file_data < "$file_path$file_name"
+    
+    [[ -n $file ]] && mapfile -t file_data < "$file"
 
     (( ${#file_data[*]} == 0 )) && {
         file_data=( "" )
@@ -558,9 +557,9 @@ read_file() {
 }
 
 write_to_file() {
-    : >"$file_path${file_name:-BTE.txt}"
+    : >"$file"
 
-    for line in "${file_data[@]}"; do echo "$line">>"$file_path$file_name"; done
+    printf "%s\n" "${file_data[@]}" > "$file"
 
     modified=0
     status_line
@@ -885,6 +884,8 @@ main() {
 
     # check validity of passed file
     check_file "$*"
+
+    file="$*"
 
     # get the name of the file
     basename "$*"
