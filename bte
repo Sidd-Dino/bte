@@ -357,6 +357,63 @@ move_right() {
     fi
 }
 
+page_up() {
+    ((file_column=0))
+    ((prev_line_column=0))
+
+    (( file_line != 0 )) && {
+        if (( page_start == 0 )); then
+            ((file_line=0))
+        elif (( page_start >= max_lines )); then
+            (( page_end=page_start ))
+            (( page_start=page_start-max_lines ))
+            (( file_line=page_start+terminal_row-1 ))
+        elif (( page_start <= max_lines )); then
+            (( page_start=0 ))
+            (( page_end=max_lines ))
+
+            (( file_line-max_lines < 0 )) && {
+                (( file_line=0 ))
+                (( terminal_row=1 ))
+            }
+
+            (( file_line-max_lines >= 0 )) && {
+                (( file_line=file_line-max_lines ))
+            }
+        fi
+
+        redraw
+    }
+}
+
+page_down() {
+    ((file_column=0))
+    ((prev_line_column=0))
+
+    (( file_line != total_lines-1 )) && {
+        if (( page_end >= total_lines )); then
+            (( file_line=total_lines-1 ))
+        elif (( page_end+max_lines <= total_lines )); then
+            (( page_start=page_end ))
+            (( page_end=page_start+max_lines ))
+            (( file_line=file_line+max_lines ))
+        else
+            (( page_start=page_end ))
+            (( page_end=page_start+max_lines ))
+
+            (( page_start+terminal_row-1 >= total_lines )) && {
+                (( file_line=total_lines-1 ))
+            }
+
+            (( page_start+terminal_row-1 < total_lines )) && {
+                (( file_line=page_start+terminal_row-1 ))
+            }
+        fi
+
+        redraw
+    }
+}
+
 # Text Modification
 ###################################################################################################
 insert_character() {
@@ -510,84 +567,158 @@ tab() {
 }
 # File Handling
 ###################################################################################################
-basename() {
-    #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
-    # Usage: basename "path" ["suffix"]
-    local tmp
+check_passed_file_argument() {
+    
+    [[ -d $* ]] && printf "%s\n" "[ERR] $* is a directory" && exit
 
-    tmp=${1%"${1##*[!/]}"}
-    tmp=${tmp##*/}
-    tmp=${tmp%"${2/"$tmp"}"}
-
-    file_name="${tmp:-/}"
+    [[ -a $* && ! -r $* ]] && printf "%s\n" "[ERR] $* is a not readable" && exit
+    
+    [[ -a $* && ! -w $* ]] && printf "%s\n" "[ERR] You don't have write perms for $*" && exit
 }
 
-dirname() {
-    #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
-    # Usage: dirname "path"
-    local tmp=${1:-.}
+ask_to_save_file() {
+    ask_to_save_file_reply=
+    # '\e7':     Save cursor position.
+    # '\e[%sH':  Move cursor to bottom (cmd_line).
+    printf '\e7\e[%sH' "$LINES"
 
-    [[ $tmp != *[!/]* ]] && {
-        file_path='/'
-        return
-    }
+    read -rsn 1 -p "Write to file? [y/n]" ask_to_save_file_reply
 
-    tmp=${tmp%%"${tmp##*[!/]}"}
-
-    [[ $tmp != */* ]] && {
-        file_path="$PWD/"
-        return
-    }
-
-    tmp=${tmp%/*}
-    tmp=${tmp%%"${tmp##*[!/]}"}
-
-    file_path="${tmp:-/}/"
+    # '\e[2K':   Clear the entire cmd_line on finish.
+    # '\e8':     Restore cursor position.
+    printf '\e[2K\e[?25l\e8'
 }
 
-check_file() {
+get_file_name_and_path() {
+    # Write to the command_line (under status_line).
+    get_file_name_and_path_reply=
 
-    [[ ! -a "$*" ]] && printf "%s\n" "[ERR] File $* does not exist" && exit
+    # '\e7':     Save cursor position.
+    # '\e[%sH':  Move cursor to bottom (cmd_line).
+    printf '\e7\e[%sH' "$LINES"
 
-    [[ ! -r $* ]] && printf "%s\n" "[ERR] File $* can't be read" && exit
+    # '\r\e[K': Redraw the read prompt on every keypress.
+    #           This is mimicking what happens normally.
+    while IFS= read -rsn 1 -p $'\r\e[K'"${get_file_name_and_path_reply}" read_reply; do
+        case $read_reply in
+            # Backspace.
+            $'\177'|$'\b')
+                get_file_name_and_path_reply=${get_file_name_and_path_reply%?}
 
-    [[ -d $* ]] && printf "%s\n" "[ERR] File $* is a directory" && exit
+                # Clear tab-completion.
+                unset comp c
+            ;;
 
+            # Tab.
+            $'\t')
+                comp_glob="$get_file_name_and_path_reply*"
+
+                # Generate a completion list once.
+                [[ -z ${comp[0]} ]] &&
+                    IFS=$'\n' read -d "" -ra comp < <(compgen -G "$comp_glob")
+
+                # On each tab press, cycle through the completion list.
+                [[ -n ${comp[c]} ]] && {
+                    get_file_name_and_path_reply=${comp[c]}
+                    ((c=c >= ${#comp[@]}-1 ? 0 : ++c))
+                }
+            ;;
+
+            # Escape / Custom 'no' value (used as a replacement for '-n 1').
+            $'\e')
+                get_file_name_and_path_reply=
+                break
+            ;;
+
+            # Enter/Return.
+            "")
+                break
+            ;;
+
+            # Replace '~' with '$HOME'.
+            "~")
+                get_file_name_and_path_reply+=$HOME
+            ;;
+
+            # Anything else, add it to read reply.
+            *)
+                get_file_name_and_path_reply+=$read_reply
+
+                # Clear tab-completion.
+                unset comp c
+            ;;
+        esac
+    done
+
+    # Unset tab completion variables since we're done.
+    unset comp c
+
+    # '\e[2K':   Clear the entire cmd_line on finish.
+    # '\e8':     Restore cursor position.
+    printf '\e[2K\e8'
+}
+
+extract_file_name_and_path() {
+    dirname() {
+        #* Code yoinked from pure-bash-bible( https://github.com/dylanaraps/pure-bash-bible )
+        # Usage: dirname "path"
+        local tmp=${1:-.}
+
+        [[ $tmp != *[!/]* ]] && {
+            printf '/\n'
+            return
+        }
+
+        tmp=${tmp%%"${tmp##*[!/]}"}
+
+        [[ $tmp != */* ]] && {
+            printf '.\n'
+            return
+        }
+
+        tmp=${tmp%/*}
+        tmp=${tmp%%"${tmp##*[!/]}"}
+
+        printf '%s\n' "${tmp:-/}"
+    }
+
+    basename() {
+        #* Code yoinked from pure-bash-bible( https://github.com/dylanaraps/pure-bash-bible )
+        # Usage: basename "path" ["suffix"]
+        local tmp
+
+        tmp=${1%"${1##*[!/]}"}
+        tmp=${tmp##*/}
+        tmp=${tmp%"${2/"$tmp"}"}
+
+        printf '%s\n' "${tmp:-/}"
+    }
+
+    file_name=$(basename "$*")
+    file_path=$(dirname "$*")
 }
 
 read_file() {
+    mapfile -t file_data < "$file_path/$file_name"
 
-    # Bash 4+
-    [[ -n $file_name ]] && mapfile -t file_data < "$file_path$file_name"
-
-    (( ${#file_data[*]} == 0 )) && {
-        file_data=( "" )
+    (( ${#file_data[@]} == 0 )) && {
+        file_data=("")
     }
 
-    # file line count
-    total_lines="${#file_data[*]}"
-
-    # Adding a ' ' to the end of each line to allow
-    # editing the last character of a line. The cursor
-    # always stays ahead of the point where it modifies
-    # Hence to modify the contextually last character of line
-    # A ' ' needs to be introduced at the end.
-    for (( i=0;i<total_lines;i++ ));do
-        file_data[$i]+=" "
-    done
+    for (( i=0;i<${#file_data[@]};i++ )); do file_data[$i]+=" "; done
 }
 
 write_to_file() {
-    : >"$file_path${file_name:-BTE.txt}"
+    :> "$file_path/$file_name"
 
-    for line in "${file_data[@]}"; do echo "$line">>"$file_path$file_name"; done
-
-    modified=0
-    status_line
+    for line in "${file_data[@]}"; do
+        printf '%s\n' "$line" >> "$file_path/$file_name"
+    done
 }
 
 # Main Functions
 ###################################################################################################
+
 key() {
     local special_keys
 
@@ -670,61 +801,12 @@ key() {
 
         # Go up one page
         "${PGUP:=$'\E[5~'}")
-            ((file_column=0))
-            ((prev_line_column=0))
-
-            (( file_line != 0 )) && {
-                if (( page_start == 0 )); then
-                    ((file_line=0))
-                elif (( page_start >= max_lines )); then
-                    (( page_end=page_start ))
-                    (( page_start=page_start-max_lines ))
-                    (( file_line=page_start+terminal_row-1 ))
-                elif (( page_start <= max_lines )); then
-                    (( page_start=0 ))
-                    (( page_end=max_lines ))
-
-                    (( file_line-max_lines < 0 )) && {
-                        (( file_line=0 ))
-                        (( terminal_row=1 ))
-                    }
-
-                    (( file_line-max_lines >= 0 )) && {
-                        (( file_line=file_line-max_lines ))
-                    }
-                fi
-
-                redraw
-            }
+            page_up
         ;;
 
         # Go down one page
         "${PGDWN:=$'\E[6~'}")
-            ((file_column=0))
-            ((prev_line_column=0))
-
-            (( file_line != total_lines-1 )) && {
-                if (( page_end >= total_lines )); then
-                    (( file_line=total_lines-1 ))
-                elif (( page_end+max_lines <= total_lines )); then
-                    (( page_start=page_end ))
-                    (( page_end=page_start+max_lines ))
-                    (( file_line=file_line+max_lines ))
-                else
-                    (( page_start=page_end ))
-                    (( page_end=page_start+max_lines ))
-
-                    (( page_start+terminal_row-1 >= total_lines )) && {
-                        (( file_line=total_lines-1 ))
-                    }
-
-                    (( page_start+terminal_row-1 < total_lines )) && {
-                        (( file_line=page_start+terminal_row-1 ))
-                    }
-                fi
-
-                redraw
-            }
+            page_down
         ;;
 
         # Move to start of line
@@ -814,35 +896,26 @@ key() {
         ;;
 
         "${WRITE_TO_FILE_KEY:=$'\017'}")
-            write_to_file
-            status_line
+            [[ $file_name == "" ]] && {
+                get_file_name_and_path
+                [[ $get_file_name_and_path_reply == "" ]] && return
+                extract_file_name_and_path "$get_file_name_and_path_reply"
+                write_to_file
+                status_line
+            }
         ;;
 
         # Ctrl+file_column to quit
         "${QUIT_KEY:=$'\030'}")
-            exit
-        ;;
+            (( modified == 0 )) && {
+                exit
+            }
+            ask_to_save_file
 
-        # DEBUG Functionality
-        #-=========================================
-
-        # F5 key to redraw the current screen
-        # Used for debug purposes
-        "${REDRAW:=$'\E[15~'}")
-            redraw
+            [[ "yY" == *$ask_to_save_file_reply* ]] && {
+                write_to_file
+            }
         ;;
-
-        #!debug------------------------------------
-        # DUMP VALUES
-        $'\Ed')
-            printf "%s\n" \
-                    "UNDO_STACK--------------------"\
-                    "${undo_stack[@]}" \
-                    "REDO_STACK--------------------"\
-                    "${redo_stack[@]}" \
-                    "==============================">> BTE_DUMP
-        ;;
-        #!debug------------------------------------
 
     esac
 }
@@ -874,9 +947,9 @@ init_vars() {
     #                    in any way or form
 
     file_name=""
-    file_path="$PWD/"
+    file_path=""
 
-    file_data=( " " )
+    file_data=( )
 
     file_column=0
     file_line=0
@@ -896,13 +969,23 @@ init_vars() {
 }
 
 main() {
+
     [[ $1 == -v ]] && {
-        printf '%s\n' "BTE 0.1"
+        printf "bte (beta version)"
         exit
     }
 
     # To stop read from waiting indefinetly for a character input
     read_flags=(-t 0.05)
+
+    get_term_size
+    init_vars
+
+    [[ -n $* ]] && {
+        check_passed_file_argument "$*"
+        extract_file_name_and_path "$*"
+        read_file
+    }
 
     # Trap the exit signal (we need to reset the terminal to a useable state.)
     trap 'reset_terminal' EXIT
@@ -910,21 +993,7 @@ main() {
     # Trap the window resize signal (handle window resize events).
     trap 'get_term_size; redraw' WINCH
 
-    get_term_size
-    init_vars
     setup_terminal
-
-    # Check to see of a file name has been passsed
-    if [[ -n $* ]]; then
-        check_file "$*"
-
-        dirname "$*"
-        basename "$*"
-        
-        # load file onto array file_data
-        read_file
-    fi  
-    
     redraw
 
     # Vintage infinite loop.
