@@ -2,7 +2,7 @@
 #--------------------------#
 #  ██      ██████  ██████  #
 #  ██████    ██    ████    #
-#  ██████    ██    ██████    #
+#  ██████    ██    ██████  #
 #__________________________#
 # bash text editor
 # cos.... Why the fuck not?
@@ -522,34 +522,14 @@ basename() {
     file_name="${tmp:-/}"
 }
 
-dirname() {
-    #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
-    # Usage: dirname "path"
-    local tmp=${1:-.}
-
-    [[ $tmp != *[!/]* ]] && {
-        file_path='/'
-        return
-    }
-
-    tmp=${tmp%%"${tmp##*[!/]}"}
-
-    [[ $tmp != */* ]] && {
-        file_path="$PWD/"
-        return
-    }
-
-    tmp=${tmp%/*}
-    tmp=${tmp%%"${tmp##*[!/]}"}
-
-    file_path="${tmp:-/}/"
-}
-
 check_file() {
+    [[ -z "$*" ]] && printf "%s\n" "[ERR] No file passed" && exit
 
     [[ ! -a "$*" ]] && printf "%s\n" "[ERR] File $* does not exist" && exit
 
-    [[ ! -r $* ]] && printf "%s\n" "[ERR] File $* can't be read" && exit
+    [[ -a $* && ! -r $* ]] && printf "%s\n" "[ERR] File $* can't be read" && exit
+
+    [[ -a $* && ! -w $* ]] && printf "%s\n" "[ERR] bte does not have write perms for $*" && exit
 
     [[ -d $* ]] && printf "%s\n" "[ERR] File $* is a directory" && exit
 
@@ -873,8 +853,8 @@ init_vars() {
     # modified         : Acts as a flag to show if the file/buffer has been modified
     #                    in any way or form
 
+    file=""
     file_name=""
-    file_path="$PWD/"
 
     file_data=( " " )
 
@@ -888,10 +868,6 @@ init_vars() {
     page_start=0
     page_end=$max_lines
 
-    mergeable_block=
-    undo_stack=()
-    redo_stack=()
-
     modified=0
 }
 
@@ -904,27 +880,25 @@ main() {
     # To stop read from waiting indefinetly for a character input
     read_flags=(-t 0.05)
 
+    get_term_size
+    init_vars
+
+    # check validity of passed file
+    check_file "$*"
+
+    # get the name of the file
+    basename "$*"
+
+    # load file onto array file_data
+    read_file 
+
     # Trap the exit signal (we need to reset the terminal to a useable state.)
     trap 'reset_terminal' EXIT
 
     # Trap the window resize signal (handle window resize events).
     trap 'get_term_size; redraw' WINCH
-
-    get_term_size
-    init_vars
-    setup_terminal
-
-    # Check to see of a file name has been passsed
-    if [[ -n $* ]]; then
-        check_file "$*"
-
-        dirname "$*"
-        basename "$*"
-        
-        # load file onto array file_data
-        read_file
-    fi  
     
+    setup_terminal
     redraw
 
     # Vintage infinite loop.
