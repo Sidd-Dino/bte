@@ -2,8 +2,12 @@
 #--------------------------#
 #  ██      ██████  ██████  #
 #  ██████    ██    ████    #
-#  ██████    ██    ██████    #
+#  ██████    ██    ██████  #
 #__________________________#
+#               _____         
+# ______ _  ___/ / (_)__  ___ 
+#/ __/  ' \/ _  / / / _ \/ -_)
+#\__/_/_/_/\_,_/_/_/_//_/\__/ 
 # bash text editor
 # cos.... Why the fuck not?
 
@@ -357,6 +361,63 @@ move_right() {
     fi
 }
 
+page_up() {
+     ((file_column=0))
+    ((prev_line_column=0))
+
+    (( file_line != 0 )) && {
+        if (( page_start == 0 )); then
+            ((file_line=0))
+        elif (( page_start >= max_lines )); then
+            (( page_end=page_start ))
+            (( page_start=page_start-max_lines ))
+            (( file_line=page_start+terminal_row-1 ))
+        elif (( page_start <= max_lines )); then
+            (( page_start=0 ))
+            (( page_end=max_lines ))
+
+            (( file_line-max_lines < 0 )) && {
+                (( file_line=0 ))
+                (( terminal_row=1 ))
+            }
+
+            (( file_line-max_lines >= 0 )) && {
+                (( file_line=file_line-max_lines ))
+            }
+        fi
+
+        redraw
+    }
+}
+
+page_down() {
+    ((file_column=0))
+    ((prev_line_column=0))
+
+    (( file_line != total_lines-1 )) && {
+        if (( page_end >= total_lines )); then
+            (( file_line=total_lines-1 ))
+        elif (( page_end+max_lines <= total_lines )); then
+            (( page_start=page_end ))
+            (( page_end=page_start+max_lines ))
+            (( file_line=file_line+max_lines ))
+        else
+            (( page_start=page_end ))
+            (( page_end=page_start+max_lines ))
+
+            (( page_start+terminal_row-1 >= total_lines )) && {
+                (( file_line=total_lines-1 ))
+            }
+
+            (( page_start+terminal_row-1 < total_lines )) && {
+                (( file_line=page_start+terminal_row-1 ))
+            }
+        fi
+
+        redraw
+    }
+}
+
 # Text Modification
 ###################################################################################################
 insert_character() {
@@ -508,10 +569,18 @@ tab() {
     ((file_column+=4))
     prev_line_column=$file_column
 }
-# File Handling
+
+# File Handling Functions
 ###################################################################################################
-basename() {
-    #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
+check_file_validity() {
+    [[ -a $* && -d "$*" ]] && printf "%s" "[ERR] $* is a directory" && exit
+
+    [[ -a $* && ! -r "$*" ]] && printf "%s" "[ERR] $* cant be read" && exit
+
+    [[ -a $* && ! -w "$*" ]] && printf "%s" "[ERR] $* cant be written into" && exit
+}
+
+filename_extractor() {
     # Usage: basename "path" ["suffix"]
     local tmp
 
@@ -522,72 +591,87 @@ basename() {
     file_name="${tmp:-/}"
 }
 
-dirname() {
-    #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
-    # Usage: dirname "path"
-    local tmp=${1:-.}
-
-    [[ $tmp != *[!/]* ]] && {
-        file_path='/'
-        return
-    }
-
-    tmp=${tmp%%"${tmp##*[!/]}"}
-
-    [[ $tmp != */* ]] && {
-        file_path="$PWD/"
-        return
-    }
-
-    tmp=${tmp%/*}
-    tmp=${tmp%%"${tmp##*[!/]}"}
-
-    file_path="${tmp:-/}/"
-}
-
-check_file() {
-
-    [[ ! -a "$*" ]] && printf "%s\n" "[ERR] File $* does not exist" && exit
-
-    [[ ! -r $* ]] && printf "%s\n" "[ERR] File $* can't be read" && exit
-
-    [[ -d $* ]] && printf "%s\n" "[ERR] File $* is a directory" && exit
-
-}
-
 read_file() {
+    mapfile -t file_data < "$file"
 
-    # Bash 4+
-    [[ -n $file_name ]] && mapfile -t file_data < "$file_path$file_name"
+    (( ${#file_data[@]} == 0 )) && file_data=( "" )
 
-    (( ${#file_data[*]} == 0 )) && {
-        file_data=( "" )
+    for (( line=0;line<${#file_data[@]};line++ )){
+        file_data[$line]+=" "
     }
-
-    # file line count
-    total_lines="${#file_data[*]}"
-
-    # Adding a ' ' to the end of each line to allow
-    # editing the last character of a line. The cursor
-    # always stays ahead of the point where it modifies
-    # Hence to modify the contextually last character of line
-    # A ' ' needs to be introduced at the end.
-    for (( i=0;i<total_lines;i++ ));do
-        file_data[$i]+=" "
-    done
 }
 
 write_to_file() {
-    : >"$file_path${file_name:-BTE.txt}"
-
-    for line in "${file_data[@]}"; do echo "$line">>"$file_path$file_name"; done
-
-    modified=0
-    status_line
+    lol=
 }
 
+# Commands
+###################################################################################################
+write() {
+    [[ -z "$*" ]] && {
+        [[ -z "$file" ]] && {
+            printf "\e[2K%s" "[ERR] File name not set"
+            return
+        }
+
+        write_to_file
+        modified="$*"
+    }
+
+    [[ -n "$*" ]] && {
+        [[ -z "$file" ]] && {
+            file="$*"
+            basename "$*"
+        }
+        write_to_file
+    }
+}
 # Main Functions
 ###################################################################################################
+cmd_line(){
+    cmd_reply=
+
+    # '\e7':     Save cursor position.
+    # '\e[%sH':  Move cursor to bottom (cmd_line).
+    printf '\e7\e[%sH' "$LINES"
+    
+    while IFS= read -rsn 1 -p $'\r\e[K'"${cmd_reply}" read_reply; do
+        case $read_reply in
+            # Backspace.
+            $'\177'|$'\b')
+                cmd_reply=${cmd_reply%?}
+            ;;
+
+            # Escape / Custom 'no' value (used as a replacement for '-n 1').
+            $'\e')
+                read "${read_flags[@]}" -rsn 2
+                cmd_reply=
+                break
+            ;;
+
+            # Enter/Return.
+            "")
+                break
+            ;;
+
+            " ")
+                cmd_reply+=" "
+            ;;
+
+            # Anything else, add it to read reply.
+            *)
+                cmd_reply+=$read_reply
+            ;;
+        esac
+    done
+
+    "$cmd_reply"
+
+    # '\e[2K':   Clear the entire cmd_line on finish.
+    # '\e8':     Restore cursor position.
+    printf '\e[2K\e8'
+}
+
 key() {
     local special_keys
 
@@ -616,16 +700,6 @@ key() {
                 #* read 4
                 read "${read_flags[@]}" -srn 1
                 special_keys+=${REPLY}
-
-                [[ ${REPLY} == [[:digit:]] ]] && {
-                    read "${read_flags[@]}" -srn 1 _
-                    special_keys+="~"
-                }
-
-                [[ ${REPLY} == ";" ]] && {
-                    read "${read_flags[@]}" -srn 2
-                    special_keys+=${REPLY}
-                }
             }
         }
 
@@ -670,61 +744,12 @@ key() {
 
         # Go up one page
         "${PGUP:=$'\E[5~'}")
-            ((file_column=0))
-            ((prev_line_column=0))
-
-            (( file_line != 0 )) && {
-                if (( page_start == 0 )); then
-                    ((file_line=0))
-                elif (( page_start >= max_lines )); then
-                    (( page_end=page_start ))
-                    (( page_start=page_start-max_lines ))
-                    (( file_line=page_start+terminal_row-1 ))
-                elif (( page_start <= max_lines )); then
-                    (( page_start=0 ))
-                    (( page_end=max_lines ))
-
-                    (( file_line-max_lines < 0 )) && {
-                        (( file_line=0 ))
-                        (( terminal_row=1 ))
-                    }
-
-                    (( file_line-max_lines >= 0 )) && {
-                        (( file_line=file_line-max_lines ))
-                    }
-                fi
-
-                redraw
-            }
+           page_up
         ;;
 
         # Go down one page
         "${PGDWN:=$'\E[6~'}")
-            ((file_column=0))
-            ((prev_line_column=0))
-
-            (( file_line != total_lines-1 )) && {
-                if (( page_end >= total_lines )); then
-                    (( file_line=total_lines-1 ))
-                elif (( page_end+max_lines <= total_lines )); then
-                    (( page_start=page_end ))
-                    (( page_end=page_start+max_lines ))
-                    (( file_line=file_line+max_lines ))
-                else
-                    (( page_start=page_end ))
-                    (( page_end=page_start+max_lines ))
-
-                    (( page_start+terminal_row-1 >= total_lines )) && {
-                        (( file_line=total_lines-1 ))
-                    }
-
-                    (( page_start+terminal_row-1 < total_lines )) && {
-                        (( file_line=page_start+terminal_row-1 ))
-                    }
-                fi
-
-                redraw
-            }
+            page_down
         ;;
 
         # Move to start of line
@@ -776,7 +801,7 @@ key() {
         ;;
         
         # Tab key to add 4 spaces
-        "${TAB_KEY=$'\t'}")
+        "${TAB_KEY:=$'\t'}")
             tab
             draw_line
             sync_cursor
@@ -798,51 +823,9 @@ key() {
             status_line
         ;;
 
-        # Editor Functionality
-        #-=========================================
-
-        "${UNDO_KEY:=$'\Eu'}")
-            undo
-            sync_cursor
-            status_line
+        "${COMMAND_KEY:=$'\ec'}")
+            cmd_line
         ;;
-
-        "${REDO_KEY:=$'\Er'}")
-            redo
-            sync_cursor
-            status_line
-        ;;
-
-        "${WRITE_TO_FILE_KEY:=$'\017'}")
-            write_to_file
-            status_line
-        ;;
-
-        # Ctrl+file_column to quit
-        "${QUIT_KEY:=$'\030'}")
-            exit
-        ;;
-
-        # DEBUG Functionality
-        #-=========================================
-
-        # F5 key to redraw the current screen
-        # Used for debug purposes
-        "${REDRAW:=$'\E[15~'}")
-            redraw
-        ;;
-
-        #!debug------------------------------------
-        # DUMP VALUES
-        $'\Ed')
-            printf "%s\n" \
-                    "UNDO_STACK--------------------"\
-                    "${undo_stack[@]}" \
-                    "REDO_STACK--------------------"\
-                    "${redo_stack[@]}" \
-                    "==============================">> BTE_DUMP
-        ;;
-        #!debug------------------------------------
 
     esac
 }
@@ -873,10 +856,10 @@ init_vars() {
     # modified         : Acts as a flag to show if the file/buffer has been modified
     #                    in any way or form
 
+    file=""
     file_name=""
-    file_path="$PWD/"
 
-    file_data=( " " )
+    file_data=( )
 
     file_column=0
     file_line=0
@@ -904,27 +887,25 @@ main() {
     # To stop read from waiting indefinetly for a character input
     read_flags=(-t 0.05)
 
+    get_term_size
+    init_vars
+
+    # Check to see of a file name has been passsed
+    if [[ -n $* ]]; then
+        check_file_validity "$*"
+        filename_extractor  "$*"
+
+        # load file onto array file_data
+        read_file
+    fi  
+
     # Trap the exit signal (we need to reset the terminal to a useable state.)
     trap 'reset_terminal' EXIT
 
     # Trap the window resize signal (handle window resize events).
     trap 'get_term_size; redraw' WINCH
-
-    get_term_size
-    init_vars
-    setup_terminal
-
-    # Check to see of a file name has been passsed
-    if [[ -n $* ]]; then
-        check_file "$*"
-
-        dirname "$*"
-        basename "$*"
-        
-        # load file onto array file_data
-        read_file
-    fi  
     
+    setup_terminal
     redraw
 
     # Vintage infinite loop.
