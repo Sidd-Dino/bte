@@ -66,9 +66,11 @@ get_term_size() {
 ###################################################################################################
 print_ERR_and_die() {
     #* Thank you whetu
-    printf -- "\e[38;5;9m%s\e[m\n"\
-              "$1"
-    exit
+
+    # Print error message to stderr
+    printf -- '\e[38;5;9m%s\e[m\n'\
+              "$1" >&2
+    exit 1
 }
 
 status_line() {
@@ -519,7 +521,7 @@ tab() {
 }
 # File Handling
 ###################################################################################################
-basename() {
+filename() {
     #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
     # Usage: basename "path" ["suffix"]
     local tmp
@@ -545,9 +547,10 @@ check_file() {
 }
 
 read_file() {
-    
-    [[ -n $file ]] && mapfile -t file_data < "$file"
+    # Map $file to array file_data
+    mapfile -t file_data < "$file"
 
+    # If file empty
     (( ${#file_data[*]} == 0 )) && {
         file_data=( "" )
     }
@@ -566,14 +569,17 @@ read_file() {
 }
 
 write_to_file() {
+    # Empty $file
     : >"$file"
 
+    # loop used because there is a 
+    # trailing whitespace in each line
     for line in "${file_data[@]}"; do
         printf -- '%s\n' "${line:: -1}" >> "$file"
     done
 
+    #set modified to false
     modified=0
-    status_line
 }
 
 # Main Functions
@@ -876,7 +882,7 @@ main() {
     file="$*"
 
     # get the name of the file
-    basename "$*"
+    filename "$*"
 
     # load file onto array file_data
     read_file 
