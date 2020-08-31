@@ -64,6 +64,13 @@ get_term_size() {
 
 # BTE functions
 ###################################################################################################
+print_ERR_and_die() {
+    #* Thank you whetu
+    printf -- "\e[38;5;9m%s\e[m\n"\
+              "$1"
+    exit
+}
+
 status_line() {
     # '\e7'        : Save cursor position.
     #                This is more widely supported than '\e[s'.
@@ -525,15 +532,15 @@ basename() {
 }
 
 check_file() {
-    [[ -z "$*" ]] && printf "%s\n" "[ERR] No file passed" && exit
+    [[ -z "$*" ]] && print_ERR_and_die "[ERR] No file passed"
 
-    [[ ! -a "$*" ]] && printf "%s\n" "[ERR] File $* does not exist" && exit
+    [[ ! -a "$*" ]] && print_ERR_and_die "[ERR] File $* does not exist"
 
-    [[ -a $* && ! -r $* ]] && printf "%s\n" "[ERR] File $* can't be read" && exit
+    [[ -a $* && ! -r $* ]] && print_ERR_and_die "[ERR] File $* can't be read"
 
-    [[ -a $* && ! -w $* ]] && printf "%s\n" "[ERR] bte does not have write perms for $*" && exit
+    [[ -a $* && ! -w $* ]] && print_ERR_and_die "[ERR] bte does not have write perms for $*"
 
-    [[ -d $* ]] && printf "%s\n" "[ERR] File $* is a directory" && exit
+    [[ -d $* ]] && print_ERR_and_die "[ERR] File $* is a directory"
 
 }
 
