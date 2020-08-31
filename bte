@@ -386,6 +386,8 @@ line_break() {
         draw_line "$((file_line-1))"
         printf '\n'
         draw_line
+        ((page_start++))
+        ((page_end++))
     }
 
     # Incase newline is invoked anywhere else in the scroll region
@@ -559,7 +561,9 @@ read_file() {
 write_to_file() {
     : >"$file"
 
-    printf "%s\n" "${file_data[@]}" > "$file"
+    for line in "${file_data[@]}"; do
+        printf -- '%s\n' "${line:: -1}" >> "$file"
+    done
 
     modified=0
     status_line
@@ -877,7 +881,8 @@ main() {
     }
 
     # To stop read from waiting indefinetly for a character input
-    read_flags=(-t 0.05)
+    ((BASH_VERSINFO[0] > 3)) &&
+        read_flags=(-t 0.5)
 
     get_term_size
     init_vars
