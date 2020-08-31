@@ -629,37 +629,37 @@ key() {
         # Move Cursor Right
         # 'C' is what bash sees when the right arrow is pressed
         # ('\e[C' or '\eOC').
-        "${SCROLL_RIGHT1:=$'\e[C'}"|\
-        "${SCROLL_RIGHT2:=$'\eOC'}")
+        "${bte_scroll_right_1:=$'\e[C'}"|\
+        "${bte_scroll_right_2:=$'\eOC'}")
             move_right
         ;;
 
         # Move Cursor Left
         # 'D' is what bash sees when the left arrow is pressed
         # ('\e[D' or '\eOD').
-        "${SCROLL_LEFT1:=$'\e[D'}"|\
-        "${SCROLL_LEFT2:=$'\eOD'}")
+        "${bte_scroll_left_1:=$'\e[D'}"|\
+        "${bte_scroll_left_2:=$'\eOD'}")
             move_left
         ;;
 
         # Scroll up.
         # 'A' is what bash sees when the up arrow is pressed
         # ('\e[A' or '\eOA').
-        "${SCROLL_UP2:=$'\e[A'}"|\
-        "${SCROLL_UP3:=$'\eOA'}")
+        "${bte_scroll_up_1:=$'\e[A'}"|\
+        "${bte_scroll_up_2:=$'\eOA'}")
             move_up
         ;;
 
         # Scroll down.
         # 'B' is what bash sees when the down arrow is pressed
         # ('\e[B' or '\eOB').
-        "${SCROLL_DOWN2:=$'\e[B'}"|\
-        "${SCROLL_DOWN3:=$'\eOB'}")
+        "${bte_scroll_down_1:=$'\e[B'}"|\
+        "${bte_scroll_down_2:=$'\eOB'}")
             move_down
         ;;
 
         # Go up one page
-        "${PGUP:=$'\E[5~'}")
+        "${bte_pgup:=$'\E[5~'}")
             ((file_column=0))
             ((prev_line_column=0))
 
@@ -689,7 +689,7 @@ key() {
         ;;
 
         # Go down one page
-        "${PGDWN:=$'\E[6~'}")
+        "${bte_pgdwn:=$'\E[6~'}")
             ((file_column=0))
             ((prev_line_column=0))
 
@@ -718,7 +718,7 @@ key() {
         ;;
 
         # Move to start of line
-        "${HOME_KEY:=$'\E[1~'}")
+        "${bte_home_key:=$'\E[1~'}")
             ((file_column=0))
             ((prev_line_column=0))
             draw_line
@@ -727,7 +727,7 @@ key() {
         ;;
 
         # Move to end of line
-        "${END_KEY:=$'\E[4~'}")
+        "${bte_end_key:=$'\E[4~'}")
             ((file_column=${#file_data[file_line]}))
             ((prev_line_column=${#file_data[file_line]}))
             draw_line
@@ -739,7 +739,7 @@ key() {
         #-=========================================
 
         # TO instert a newline in the text
-        "${NEWLINE:=""}")
+        "${bte_newline_key:=""}")
             line_break
             sync_cursor
 
@@ -748,8 +748,8 @@ key() {
         ;;
 
         # Backspace to remove a character before the cursor
-        "${BCKSPC1:=$'\b'}"|\
-        "${BCKSPC2:=$'\177'}")
+        "${bte_bckspc_key_1:=$'\b'}"|\
+        "${bte_bckspc_key_2:=$'\177'}")
             back_space
             sync_cursor
             modified=1
@@ -757,7 +757,7 @@ key() {
         ;;
 
         # Delete key to remove the character under the cursor
-        "${DELETE_KEY:=$'\e[3~'}")
+        "${bte_delete_key:=$'\e[3~'}")
             delete_character
             sync_cursor
             modified=1
@@ -766,7 +766,7 @@ key() {
         ;;
         
         # Tab key to add 4 spaces
-        "${TAB_KEY=$'\t'}")
+        "${bte_tab_key=$'\t'}")
             tab
             draw_line
             sync_cursor
@@ -791,18 +791,6 @@ key() {
         # Editor Functionality
         #-=========================================
 
-        "${UNDO_KEY:=$'\Eu'}")
-            undo
-            sync_cursor
-            status_line
-        ;;
-
-        "${REDO_KEY:=$'\Er'}")
-            redo
-            sync_cursor
-            status_line
-        ;;
-
         "${WRITE_TO_FILE_KEY:=$'\017'}")
             write_to_file
             status_line
@@ -818,21 +806,9 @@ key() {
 
         # F5 key to redraw the current screen
         # Used for debug purposes
-        "${REDRAW:=$'\E[15~'}")
+        "${bte_redraw:=$'\E[15~'}")
             redraw
         ;;
-
-        #!debug------------------------------------
-        # DUMP VALUES
-        $'\Ed')
-            printf "%s\n" \
-                    "UNDO_STACK--------------------"\
-                    "${undo_stack[@]}" \
-                    "REDO_STACK--------------------"\
-                    "${redo_stack[@]}" \
-                    "==============================">> BTE_DUMP
-        ;;
-        #!debug------------------------------------
 
     esac
 }
