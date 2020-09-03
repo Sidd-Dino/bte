@@ -1,14 +1,17 @@
-
 <p align="center"><img src="https://i.imgur.com/znrtFBA.png" width="250px"></p>
 <h1 align="center">bash text editor</h1> <p
-align="center">A text editor written in bash.
-Cos why the fuck not</p>
+align="center">A simple text editor written in bash.</p>
 
 <p align="center"><img src="https://i.imgur.com/tOK7imI.png"></p>
 
 ## Requirements
 ```
 bash 4+
+```
+
+## Instalation
+```
+make install
 ```
 
 ## Keybindings
