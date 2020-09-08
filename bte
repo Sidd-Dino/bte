@@ -797,13 +797,13 @@ key() {
         # Editor Functionality
         #-=========================================
 
-        "${WRITE_TO_FILE_KEY:=$'\017'}")
+        "${bte_write:=$'\017'}")
             write_to_file
             status_line
         ;;
 
         # Ctrl+file_column to quit
-        "${QUIT_KEY:=$'\030'}")
+        "${bte_quit:=$'\030'}")
             exit
         ;;
 
