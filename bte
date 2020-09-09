@@ -366,9 +366,46 @@ move_right() {
     fi
 }
 
+# Undo/Redo functions
+###################################################################################################
+check_if_action_can_be_merged() {
+    # If stack is empty
+    (( ${#undo_stack[@]} == 0 )) && return 1
+
+    # if the action of the top block is not the same
+    # with the action passed as an argument
+    [[ "${undo_stack[1]:4}" != "$1"  ]] && return 1
+
+    [[ "BCK DEL" == *$1* && ${undo_stack[2]:5} == "$file_column $file_line" ]] &&\
+        return 0
+
+    
+}
+
+add_action_to_undo_stack() {
+    # $1 is the action being perfored
+    # $2 contains the 
+    if check_if_action_can_be_merged $1 ; then
+        
+    else
+
+    fi
+}
+
+undo_action() {
+    l=
+}
+
+redo_action() {
+    l=
+}
+
 # Text Modification
 ###################################################################################################
 insert_character() {
+    # Add action to undo stack
+    add_action_to_undo_stack "INS" "$1"
+
     local fore="${file_data[file_line]::file_column}"
     local aft="${file_data[file_line]:file_column}"
     file_data[$file_line]="$fore$1$aft"
@@ -377,6 +414,8 @@ insert_character() {
 }
 
 line_break() {
+     # Add action to undo stack
+    add_action_to_undo_stack "L_B"
 
     # Inserting additional line
     file_data=( "${file_data[@]::file_line}" \
@@ -415,6 +454,9 @@ back_space() {
     (( file_column == 0 )) && {
         (( file_line < 1 )) && return;
 
+        # Add action to undo stack
+        add_action_to_undo_stack "L_J" "BCK"
+
         ((file_column=${#file_data[file_line-1]}-1))
         ((prev_line_column=${#file_data[file_line-1]}-1))
 
@@ -449,6 +491,9 @@ back_space() {
     # If backspace is used anywhere else
     (( file_column > 0 )) && {
 
+        # Add action to undo stack
+        add_action_to_undo_stack "BCK" "${file_data[y]:x-1:1}"
+
         local prev="${file_data[file_line]::file_column-1}"
         local aft="${file_data[file_line]:file_column}"
 
@@ -470,6 +515,9 @@ delete_character() {
         ((prev_line_column=file_column))
 
         (( file_line == total_lines-1 )) && return;
+
+        # Add action to undo stack
+        add_action_to_undo_stack "L_J" "DEL"
 
         file_data=( "${file_data[@]::file_line}" \
                     "${file_data[file_line]::-1}${file_data[file_line+1]}" \
@@ -499,6 +547,9 @@ delete_character() {
 
     # if delete is used anywhere else
     (( file_column < ${#file_data[file_line]}-1 )) && {
+
+        # Add action to undo stack
+        add_action_to_undo_stack "DEL" "${file_data[y]:x:1}"
 
         local fore="${file_data[file_line]::file_column}"
         local aft="${file_data[file_line]:file_column+1}"
@@ -797,6 +848,18 @@ key() {
         # Editor Functionality
         #-=========================================
 
+        "${bte_undo:=$'\Eu'}")
+            undo_action
+            sync_cursor
+            status_line
+        ;;
+
+        "${bte_redo:=$'\Er'}")
+            redo_action
+            sync_cursor
+            status_line
+        ;;
+
         "${bte_write:=$'\017'}")
             write_to_file
             status_line
@@ -814,6 +877,15 @@ key() {
         # Used for debug purposes
         "${bte_redraw:=$'\E[15~'}")
             redraw
+        ;;
+
+        "${bte_debug_key:=$'\eD'}")
+            printf --      "----------------\n"
+            printf --      "undo-stack------\n" >> ~/.bte_debug_log
+            printf -- "%s\n" "${undo_stack[@]}" >> ~/.bte_debug_log
+            printf --      "redo-stack------\n" >> ~/.bte_debug_log
+            printf -- "%s\n" "${redo_stack[@]}" >> ~/.bte_debug_log
+            printf --      "----------------\n"
         ;;
 
     esac
@@ -860,12 +932,13 @@ init_vars() {
     page_start=0
     page_end=$max_lines
 
-    modified=0
+    undo_stack=()
+    redo_stack=()
 }
 
 main() {
     [[ $1 == -v ]] && {
-        printf '%s\n' "BTE 0.1"
+        printf '%s\n' "BTE 0.2"
         exit
     }
 
