@@ -23,6 +23,9 @@ Pg Dwn      : To move down a page
 Back Space  : To delete the character before the cursor
 Delete      : To delete the character under the cursor
 
+Alt+u       : Undo action
+Alt+r       : Redo action
+
 Ctrl+O      : Save file
 Ctrl+X      : Quit the editor
 ```
