@@ -151,11 +151,11 @@ draw_line() {
     # Case I
     # Just print the entire line
     if (( ${#file_data[curr]} <= COLUMNS )); then
-        printf "%s" "${file_data[curr]}"
+        printf -- "%s" "${file_data[curr]}"
 
     # Case II
     elif (( curr != file_line || file_column < (COLUMNS-2) )); then
-            printf "%s\e[30;41m%s\e[m" \
+            printf -- "%s\e[30;41m%s\e[m" \
                     "${file_data[curr]:0:$((COLUMNS-1))}"\
                     ">"
     else
@@ -165,13 +165,13 @@ draw_line() {
 
         # Case III
         if (( ${#file_data[curr]} < x_end )); then
-            printf "\e[30;41m%s\e[m%s" \
+            printf -- "\e[30;41m%s\e[m%s" \
                     "<" \
                     "${file_data[curr]:$((line_break_start-2)):$line_break_end}"
 
         # Case IV
         else
-            printf "\e[30;41m%s\e[m%s\e[30;41m%s\e[m" \
+            printf -- "\e[30;41m%s\e[m%s\e[30;41m%s\e[m" \
                     "<" \
                     "${file_data[curr]:$((line_break_start-2)):$((line_break_end+1))}" \
                     ">"
@@ -251,26 +251,26 @@ sync_cursor() {
     # If prev_line_column is greater than the length of the current file_line.
     # The value of file_column is set to the end of the line
     if (( prev_line_column >= ${#file_data[file_line]} )); then
-        file_column=$((${#file_data[file_line]}-1))
+        file_column="$((${#file_data[file_line]}-1))"
 
     # If prev_line_column is smaller than or equal to the length
     # of the current file_line'th line
     else
-        file_column=$prev_line_column
+        file_column="$prev_line_column"
     fi
 
     if (( file_column < (COLUMNS-2) || ${#file_data[file_line]} <= COLUMNS )); then
-        terminal_column=$((file_column+1))
+        terminal_column="$((file_column+1))"
     else
-        local p=$(( (file_column-COLUMNS+2) / (COLUMNS-5) ))
-        local x_start=$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))
-        local x_end=$(( x_start+COLUMNS-5 ))
+        local p="$(( (file_column-COLUMNS+2) / (COLUMNS-5) ))"
+        local x_start="$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))"
+        local x_end="$(( x_start+COLUMNS-5 ))"
 
-        terminal_column=$(( file_column-x_start+4 ))
+        terminal_column="$(( file_column-x_start+4 ))"
     fi
 
     # move cursor to position terminal_column,terminal_row
-    printf '\e[%s;%sH' "$terminal_row" "$terminal_column"
+    printf -- '\e[%s;%sH' "$terminal_row" "$terminal_column"
 
 }
 
@@ -564,6 +564,7 @@ read_file() {
     # Hence to modify the contextually last character of line
     # A ' ' needs to be introduced at the end.
     for (( i=0;i<total_lines;i++ ));do
+        file_data[$i]="${file_data[$i]//$'\t'/<TAB>}"
         file_data[$i]+=" "
     done
 }
@@ -575,6 +576,7 @@ write_to_file() {
     # loop used because there is a 
     # trailing whitespace in each line
     for line in "${file_data[@]}"; do
+        line="${line//<TAB>/$'\t'}"
         printf -- '%s\n' "${line:: -1}" >> "$file"
     done
 
@@ -814,6 +816,15 @@ key() {
         # Used for debug purposes
         "${bte_redraw:=$'\E[15~'}")
             redraw
+        ;;
+
+        $'\ed')
+            printf -- "------\nCOL:%s\nTxt_L:%s\nTxt:%s\n%s\nC_pos:%s,%s\n" \
+                      "$COLUMNS"\
+                      "${#file_data[file_line]}"\
+                      "${file_data[file_line]}"\
+                      "$prev_line_column"\
+                      "$terminal_row" "$terminal_column" >> ~/.bte_log
         ;;
 
     esac
