@@ -575,6 +575,7 @@ add_action_to_undo_stack() {
 
     local action="$1"
 
+    # Check if the new action block is mergeable
     mergeable_action_check "$action"
 
     (( mergeable_block==0 )) && {
