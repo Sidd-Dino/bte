@@ -139,6 +139,7 @@ draw_line() {
     #
 
     local curr=$file_line
+    local line
 
     [[ -n $1 ]] && {
         curr=$*
@@ -151,29 +152,33 @@ draw_line() {
     # Case I
     # Just print the entire line
     if (( ${#file_data[curr]} <= COLUMNS )); then
-        printf "%s" "${file_data[curr]}"
+        line="${file_data[curr]}"
+        printf "%s" "${line//$'\t'/$'\e[48;5;1m'T$'\e[m'}"
 
     # Case II
     elif (( curr != file_line || file_column < (COLUMNS-2) )); then
+            line="${file_data[curr]:0:$((COLUMNS-1))}"
             printf "%s\e[30;41m%s\e[m" \
-                    "${file_data[curr]:0:$((COLUMNS-1))}"\
+                    "${line//$'\t'/$'\e[48;5;1m'T$'\e[m'}"\
                     ">"
     else
         local p=$(( (file_column-COLUMNS+2) / (COLUMNS-5) ))
         local line_break_start=$(( ( p*(COLUMNS-5) )+(COLUMNS-2) ))
-        local line_break_end=$(( x_start+COLUMNS-5 ))
+        local line_break_end=$(( line_break_start+COLUMNS-5 ))
 
         # Case III
-        if (( ${#file_data[curr]} < x_end )); then
+        if (( ${#file_data[curr]} < line_break_end )); then
+            line="${file_data[curr]:$((line_break_start-2)):$line_break_end}"
             printf "\e[30;41m%s\e[m%s" \
                     "<" \
-                    "${file_data[curr]:$((line_break_start-2)):$line_break_end}"
+                    "${line//$'\t'/$'\e[48;5;1m'T$'\e[m'}"
 
         # Case IV
         else
+            line="${file_data[curr]:$((line_break_start-2)):$((line_break_end+1))}"
             printf "\e[30;41m%s\e[m%s\e[30;41m%s\e[m" \
                     "<" \
-                    "${file_data[curr]:$((line_break_start-2)):$((line_break_end+1))}" \
+                    "${line//$'\t'/$'\e[48;5;1m'T$'\e[m'}" \
                     ">"
         fi
     fi
@@ -1044,7 +1049,7 @@ key() {
         
         # Tab key to add 4 spaces
         "${bte_tab_key=$'\t'}")
-            tab
+            insert_character $'\t'
             draw_line
             sync_cursor
             modified=1
@@ -1052,13 +1057,14 @@ key() {
             status_line
         ;;
 
+
+
         # A-Z , a-z , 0-9 and special charcters to insert into
         # the text
         [[:alnum:]] |\
         [[:punct:]] |\
         " ")
             insert_character "$1"
-            printf '\e2K'
             draw_line
             sync_cursor
             modified=1
