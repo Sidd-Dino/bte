@@ -7,8 +7,8 @@
 # bash text editor
 # cos.... Why the fuck not?
 
-# Terminal Functions
-###################################################################################################
+# Terminal Functions {{{
+
 setup_terminal() {
     #* Code yoinked from fff( https://github.com/dylanaraps/fff )
     # Setup the terminal for the TUI.
@@ -21,7 +21,7 @@ setup_terminal() {
     printf '\e[?1049h\e[?7l\e[2J\e[1;%sr' "$max_lines"
 
     # Hide echoing of user input
-    stty -echo
+    #stty -echo
 }
 
 reset_terminal() {
@@ -62,8 +62,25 @@ get_term_size() {
     ((max_lines=LINES-3))
 }
 
-# BTE functions
-###################################################################################################
+get_cursor_pos() {
+    # Usage: get_cursor_pos
+    IFS='[;' read -p $'\e[6n' -d R -rs _ term_y term_x _
+}
+
+get_char_disp_length() {
+    #save cursor
+    printf '\e7\e[%sH\e[2K'\
+            "$LINES"
+    
+    printf "%s" "$1"
+    get_cursor_pos
+    char_disp_length=$((term_x-1))
+}
+
+# }}}
+
+# Display Management Functions {{{
+
 print_ERR_and_die() {
     #* Thank you whetu
 
@@ -73,517 +90,64 @@ print_ERR_and_die() {
     exit 1
 }
 
-status_line() {
-    # '\e7'        : Save cursor position.
-    #                This is more widely supported than '\e[s'.
-    # '\e[%sH'     : Move cursor to bottom of the terminal.
-    # '\e[30;41m'  : Set foreground and background colors.
-    # '%*s'        : Insert enough spaces to fill the screen width.
-    #                This sets the background color to the whole line
-    #                and fixes issues in 'screen' where '\e[K' doesn't work.
-    # '\r'         : Move cursor back to column 0 (was at EOL due to above).
-    # '\e[m'       : Reset text formatting.
-    # '\e[%sH\e[K' : Clear line below status_line.
-    # '\e8'        : Restore cursor position.
-    #                This is more widely supported than '\e[u'.
-
-    buffer_name="${file_name:-New Buffer}"
-    (( modified == 1 )) && buffer_name+="*"
-    counter="Ln $((file_line+1)), Col $((file_column+1))"
-
-    printf "\e7\e[%sH%s%*s%s\e[%sH\e[K\e8"\
-            "$((LINES-1))"\
-            "[$buffer_name]"\
-            "$((COLUMNS-${#buffer_name}-${#counter}-4))" ""\
-            "[$counter]"\
-            "$LINES"
-
+print_line() {
+    
 }
 
-draw_line() {
-    # BTE doesnt wrap lines. Hence it has to
-    # display part of a line depending on the
-    # file_column position.
-    #
-    # There are 4 possible cases that need to be handled
-    # to display a line properly.
-    #
-    #             COLUMNS
-    #     |<--------------------->|
-    #   I 1234567890
-    #  II 123456789012345678901234>
-    # III <23456789012345678901234>
-    #  IV <234567890
-    #
-    # Where COLUMNS is terminal width
-    #
-    # Case I:
-    #       The length of the line is smaller than or equal
-    #       to the COLUMNS
-    #
-    # Case II:
-    #       The length of the line is greater than the
-    #       COLUMNS and
-    #       The file_column position of at which the cursor is ,
-    #       is smaller than (COLUMNS-2).
-    #
-    # Case III:
-    #       The length of the line is greater than the
-    #       terminal width and the file_column position is somewhere
-    #       in the middle of the line
-    #
-    # Case IV:
-    #       The length of the line is greater than the
-    #       terminal width but the file_column position is near
-    #       the end of the line
-    #
-
-    local curr=$file_line
-
-    [[ -n $1 ]] && {
-        curr=$*
-    }
-
-    # \e[2K : Clear current line
-    # \r    : Move cursor back to column 0 (was at EOL due to above).
-    printf '\e[2K\r'
-
-    # Case I
-    # Just print the entire line
-    if (( ${#file_data[curr]} <= COLUMNS )); then
-        printf "%s" "${file_data[curr]}"
-
-    # Case II
-    elif (( curr != file_line || file_column < (COLUMNS-2) )); then
-            printf "%s\e[30;41m%s\e[m" \
-                    "${file_data[curr]:0:$((COLUMNS-1))}"\
-                    ">"
-    else
-        local p=$(( (file_column-COLUMNS+2) / (COLUMNS-5) ))
-        local line_break_start=$(( ( p*(COLUMNS-5) )+(COLUMNS-2) ))
-        local line_break_end=$(( x_start+COLUMNS-5 ))
-
-        # Case III
-        if (( ${#file_data[curr]} < x_end )); then
-            printf "\e[30;41m%s\e[m%s" \
-                    "<" \
-                    "${file_data[curr]:$((line_break_start-2)):$line_break_end}"
-
-        # Case IV
-        else
-            printf "\e[30;41m%s\e[m%s\e[30;41m%s\e[m" \
-                    "<" \
-                    "${file_data[curr]:$((line_break_start-2)):$((line_break_end+1))}" \
-                    ">"
-        fi
-    fi
+display_buffer() {
+    h=
 }
 
-draw_page() {
-    local old_max_lines=$((page_end-page_start))
-    local diff=$((max_lines-old_max_lines))
-
-    # Screen size has decreased
-    if (( diff < 0 )); then
-        # If the cursor postition is within the scrolling area
-        (( terminal_row <= max_lines )) && {
-            page_end=$((max_lines+page_start))
-        }
-
-        # If the cursor position is outside of the scrolling area
-        (( terminal_row > max_lines )) && {
-            page_end=$((file_line+1))
-            page_start=$((page_end-max_lines))
-        }
-
-    # Screen size has increased
-    elif (( diff > 0 )); then
-
-        # If the files length is bigger than scroll area
-        (( total_lines > max_lines )) && {
-            # The code below attempts to display the previously
-            # visible lines in the middle of the scroll area
-            # with the remaining space filled with available
-            # lines from file
-
-            # top_offset : The number of lines that will be added to
-            #              the top of the previously displayed lines
-            # bot_offset : The number of lines that will be added to
-            #              the bottom of the previously displayed lines
-
-            local top_offset=$((diff/2))
-            local bot_offset=$(( (diff/2)+(diff%2) ))
-
-            # If there arent enough lines in the file above
-            # page_start to cover the top region
-            if (( page_start <= top_offset )); then
-                page_start=0
-                page_end=$((page_end+top_offset))
-
-            # If there are enough lines in the file above
-            # page_start to cover the top region
-            else
-                page_start=$((page_start-top_offset))
-            fi
-
-            page_end=$((page_end+bot_offset))
-        }
-
-        # If the files length is smaller than scroll area
-        (( total_lines <= max_lines )) && {
-            page_start=0
-            page_end=$((max_lines))
-        }
-    fi
-
-
-    for ((i=page_start;i<page_end;i++)); do
-            draw_line "$i"
-            (( i+1 < page_end )) && printf "\n"
-    done
-}
-
-sync_cursor() {
-    # Sync terminal_row position
-    terminal_row=$((file_line-page_start+1))
-
-    # file_column value check
-    # If prev_line_column is greater than the length of the current file_line.
-    # The value of file_column is set to the end of the line
-    if (( prev_line_column >= ${#file_data[file_line]} )); then
-        file_column=$((${#file_data[file_line]}-1))
-
-    # If prev_line_column is smaller than or equal to the length
-    # of the current file_line'th line
-    else
-        file_column=$prev_line_column
-    fi
-
-    if (( file_column < (COLUMNS-2) || ${#file_data[file_line]} <= COLUMNS )); then
-        terminal_column=$((file_column+1))
-    else
-        local p=$(( (file_column-COLUMNS+2) / (COLUMNS-5) ))
-        local x_start=$(( (p*(COLUMNS-5) ) + (COLUMNS-2) ))
-        local x_end=$(( x_start+COLUMNS-5 ))
-
-        terminal_column=$(( file_column-x_start+4 ))
-    fi
-
-    # move cursor to position terminal_column,terminal_row
-    printf '\e[%s;%sH' "$terminal_row" "$terminal_column"
-
-}
-
-redraw() {
+reload_screen() {
     clear_screen
-    draw_page
-    sync_cursor
-    status_line
+    display_buffer
+    status_screen
 }
+# }}}
 
-# Text Navigation
-###################################################################################################
-move_up() {
-    # '\e[1L' : Insert a line above the cursor.
-    # '\e[A'  : Move cursor up a line.
-    # '\e[2K' : Clear current line
+# Text Navigation Functions {{{
 
-    # If cursor isn't at the top of the file move up
-    (( file_line > 0 )) && {
-        # redraw current line from the beginning 
-        file_column=0
-        draw_line
-        file_column=$prev_line_column
-
-        ((file_line--))
-
-        if (( terminal_row > 1 )); then
-            printf '\e[A\e2K'
-        else
-            printf '\e[1L'
-            ((page_start--))
-            ((page_end--))
-        fi
-
-        draw_line
-        sync_cursor
-        status_line
-    }
-}
-
-move_down() {
-    # '\e[B'  : Move cursor down a line.
-    # '\e[2K' : Clear current line
-
-    # If cursor isn't at the bottom of the file move down
-    (( file_line+1 < total_lines )) && {
-        # redraw current line from the beginning 
-        file_column=0
-        draw_line
-        file_column=$prev_line_column
-
-        ((file_line++))
-
-        if (( terminal_row < max_lines )); then
-            printf '\e[B\e[2K'
-        else
-            printf '\n'
-            ((page_start++))
-            ((page_end++))
-        fi
-
-        draw_line
-        sync_cursor
-        status_line
-    }
+move_right() {
+    trash=
 }
 
 move_left() {
-    if (( file_column > 0 )); then
-        ((file_column--))
-        prev_line_column=$file_column
-        draw_line
-        sync_cursor
-        status_line
-    else
-        file_column=$(( ${#file_data[file_line-1]}-1 ))
-        prev_line_column=$file_column
-        move_up
-    fi
+    trash=
 }
 
-move_right() {
-    if (( file_column+1 < ${#file_data[file_line]} )); then
-        ((file_column++))
-        prev_line_column=$file_column
-        draw_line
-        sync_cursor
-        status_line
-    elif (( file_line+1 < total_lines )); then
-        file_column=0
-        prev_line_column=$file_column
-        move_down
-    fi
+move_up() {
+
+    trash=
 }
 
-# Text Modification
-###################################################################################################
-insert_character() {
-    local fore="${file_data[file_line]::file_column}"
-    local aft="${file_data[file_line]:file_column}"
-    file_data[$file_line]="$fore$1$aft"
-    ((file_column++))
-    prev_line_column=$file_column
+move_down() {
+    trash=
 }
 
-line_break() {
+# }}}
 
-    # Inserting additional line
-    file_data=( "${file_data[@]::file_line}" \
-                "${file_data[file_line]::file_column} " \
-                "${file_data[file_line]:file_column}" \
-                "${file_data[@]:file_line+1}" )
+# Text Modification Functions {{{
 
-    ((file_line++))
-    ((file_column=0))
-    ((prev_line_column=0))
-    ((total_lines++))
-
-    # Incase newline is invoked at the bottom of the scroll region
-    # push everything up one line and print the generated newline
-    (( terminal_row == max_lines )) && {
-        draw_line "$((file_line-1))"
-        printf '\n'
-        draw_line
-        ((page_start++))
-        ((page_end++))
-    }
-
-    # Incase newline is invoked anywhere else in the scroll region
-    # push everything below the cursor down one line
-    # and print the generated newline
-    (( terminal_row < max_lines )) && {
-        draw_line
-        printf '\e[1L'
-        draw_line "$((file_line-1))"
-    }
+insert() {
+    trash=
 }
 
-back_space() {
-
-    # If backspace is used at the start of the line
-    (( file_column == 0 )) && {
-        (( file_line < 1 )) && return;
-
-        ((file_column=${#file_data[file_line-1]}-1))
-        ((prev_line_column=${#file_data[file_line-1]}-1))
-
-        file_data=( "${file_data[@]::file_line-1}" \
-                    "${file_data[file_line-1]::-1}${file_data[file_line]}" \
-                    "${file_data[@]:file_line+1}" )
-
-        ((file_line--))
-        ((total_lines--))
-
-        # If used on the first line of the terminal
-        (( terminal_row == 1 )) && {
-            printf '\e2K'
-            draw_line
-        }
-
-        # If used anywhere else. The content below the line
-        # where the cursor is would need to be shifted up a line
-        (( terminal_row > 1 )) && {
-            ((terminal_row--))
-            printf '\e[A'
-
-            for ((i=0; i<=max_lines-terminal_row; i++)); do
-                draw_line "$((file_line+i))"
-                (( i < max_lines-terminal_row )) && printf "\n"
-            done
-        }
-
-        return
-    }
-
-    # If backspace is used anywhere else
-    (( file_column > 0 )) && {
-
-        local prev="${file_data[file_line]::file_column-1}"
-        local aft="${file_data[file_line]:file_column}"
-
-        file_data[file_line]="$prev$aft"
-
-        ((file_column--))
-        ((prev_line_column=file_column))
-        printf '\e2K'
-        draw_line
-        return
-    }
-
+delete() {
+    trash=
 }
 
-delete_character() {
-
-    # if delete is used at the end of the line
-    (( file_column == ${#file_data[file_line]}-1 )) && {
-        ((prev_line_column=file_column))
-
-        (( file_line == total_lines-1 )) && return;
-
-        file_data=( "${file_data[@]::file_line}" \
-                    "${file_data[file_line]::-1}${file_data[file_line+1]}" \
-                    "${file_data[@]:file_line+2}" )
-
-        ((total_lines--))
-
-        # if used at the last line of the scroll region
-        (( terminal_row == max_lines )) && {
-            printf '\e2K'
-            draw_line
-        }
-
-        # If used anywhere else. The content below the line
-        # where the cursor is would need to be shifted up a line
-        (( terminal_row < max_lines )) && {
-            printf '\e2K'
-
-            for ((i=0; i<=max_lines-terminal_row; i++)); do
-                draw_line "$((file_line+i))"
-                (( i < max_lines-terminal_row )) && printf "\n"
-            done
-        }
-
-        return
-    }
-
-    # if delete is used anywhere else
-    (( file_column < ${#file_data[file_line]}-1 )) && {
-
-        local fore="${file_data[file_line]::file_column}"
-        local aft="${file_data[file_line]:file_column+1}"
-
-        file_data[file_line]="$fore$aft"
-
-        ((prev_line_column=file_column))
-        printf '\e2K'
-        draw_line
-        return
-    }
+backspace() {
+    trash=
 }
 
-tab() {
-    local fore="${file_data[file_line]::file_column}"
-    local aft="${file_data[file_line]:file_column}"
-    file_data[$file_line]="$fore    $aft"
-    ((file_column+=4))
-    prev_line_column=$file_column
-}
-# File Handling
-###################################################################################################
-filename() {
-    #* Code yoinked from pure-bash-bible (https://github.com/dylanaraps/pure-bash-bible)
-    # Usage: basename "path" ["suffix"]
-    local tmp
+# }}}
 
-    tmp=${1%"${1##*[!/]}"}
-    tmp=${tmp##*/}
-    tmp=${tmp%"${2/"$tmp"}"}
+# File Handling Functions {{{
 
-    file_name="${tmp:-/}"
-}
+# }}}
 
-check_file() {
-    [[ -z "$*" ]] && print_ERR_and_die "[ERR] No file passed"
+# UI Functions {{{
 
-    [[ ! -a "$*" ]] && print_ERR_and_die "[ERR] File $* does not exist"
-
-    [[ -a $* && ! -r $* ]] && print_ERR_and_die "[ERR] File $* can't be read"
-
-    [[ -a $* && ! -w $* ]] && print_ERR_and_die "[ERR] bte does not have write perms for $*"
-
-    [[ -d $* ]] && print_ERR_and_die "[ERR] File $* is a directory"
-
-}
-
-read_file() {
-    # Map $file to array file_data
-    mapfile -t file_data < "$file"
-
-    # If file empty
-    (( ${#file_data[*]} == 0 )) && {
-        file_data=( "" )
-    }
-
-    # file line count
-    total_lines="${#file_data[*]}"
-
-    # Adding a ' ' to the end of each line to allow
-    # editing the last character of a line. The cursor
-    # always stays ahead of the point where it modifies
-    # Hence to modify the contextually last character of line
-    # A ' ' needs to be introduced at the end.
-    for (( i=0;i<total_lines;i++ ));do
-        file_data[$i]+=" "
-    done
-}
-
-write_to_file() {
-    # Empty $file
-    : >"$file"
-
-    # loop used because there is a 
-    # trailing whitespace in each line
-    for line in "${file_data[@]}"; do
-        printf -- '%s\n' "${line:: -1}" >> "$file"
-    done
-
-    #set modified to false
-    modified=0
-}
-
-# Main Functions
-###################################################################################################
 key() {
     local special_keys
 
@@ -664,121 +228,24 @@ key() {
             move_down
         ;;
 
-        # Go up one page
-        "${bte_pgup:=$'\E[5~'}")
-            ((file_column=0))
-            ((prev_line_column=0))
-
-            (( file_line != 0 )) && {
-                if (( page_start == 0 )); then
-                    ((file_line=0))
-                elif (( page_start >= max_lines )); then
-                    (( page_end=page_start ))
-                    (( page_start=page_start-max_lines ))
-                    (( file_line=page_start+terminal_row-1 ))
-                elif (( page_start <= max_lines )); then
-                    (( page_start=0 ))
-                    (( page_end=max_lines ))
-
-                    (( file_line-max_lines < 0 )) && {
-                        (( file_line=0 ))
-                        (( terminal_row=1 ))
-                    }
-
-                    (( file_line-max_lines >= 0 )) && {
-                        (( file_line=file_line-max_lines ))
-                    }
-                fi
-
-                redraw
-            }
-        ;;
-
-        # Go down one page
-        "${bte_pgdwn:=$'\E[6~'}")
-            ((file_column=0))
-            ((prev_line_column=0))
-
-            (( file_line != total_lines-1 )) && {
-                if (( page_end >= total_lines )); then
-                    (( file_line=total_lines-1 ))
-                elif (( page_end+max_lines <= total_lines )); then
-                    (( page_start=page_end ))
-                    (( page_end=page_start+max_lines ))
-                    (( file_line=file_line+max_lines ))
-                else
-                    (( page_start=page_end ))
-                    (( page_end=page_start+max_lines ))
-
-                    (( page_start+terminal_row-1 >= total_lines )) && {
-                        (( file_line=total_lines-1 ))
-                    }
-
-                    (( page_start+terminal_row-1 < total_lines )) && {
-                        (( file_line=page_start+terminal_row-1 ))
-                    }
-                fi
-
-                redraw
-            }
-        ;;
-
-        # Move to start of line
-        "${bte_home_key:=$'\E[1~'}")
-            ((file_column=0))
-            ((prev_line_column=0))
-            draw_line
-            sync_cursor
-            status_line
-        ;;
-
-        # Move to end of line
-        "${bte_end_key:=$'\E[4~'}")
-            ((file_column=${#file_data[file_line]}))
-            ((prev_line_column=${#file_data[file_line]}))
-            draw_line
-            sync_cursor
-            status_line
-        ;;
-
         # Text Editing
         #-=========================================
 
         # TO instert a newline in the text
         "${bte_newline_key:=""}")
-            line_break
-            sync_cursor
-
-            modified=1
-            status_line
         ;;
 
         # Backspace to remove a character before the cursor
         "${bte_bckspc_key_1:=$'\b'}"|\
         "${bte_bckspc_key_2:=$'\177'}")
-            back_space
-            sync_cursor
-            modified=1
-            status_line
         ;;
 
         # Delete key to remove the character under the cursor
         "${bte_delete_key:=$'\e[3~'}")
-            delete_character
-            sync_cursor
-            modified=1
-
-            status_line
         ;;
         
         # Tab key to add 4 spaces
-        "${bte_tab_key=$'\t'}")
-            tab
-            draw_line
-            sync_cursor
-            modified=1
-
-            status_line
+        "${bte_tab_key:=$'\t'}")
         ;;
 
         # A-Z , a-z , 0-9 and special charcters to insert into
@@ -786,12 +253,6 @@ key() {
         [[:alnum:]] |\
         [[:punct:]] |\
         " ")
-            insert_character "$1"
-            printf '\e2K'
-            draw_line
-            sync_cursor
-            modified=1
-            status_line
         ;;
 
         # Editor Functionality
@@ -802,7 +263,7 @@ key() {
             status_line
         ;;
 
-        # Ctrl+file_column to quit
+        # Ctrl+x to quit
         "${QUIT_KEY:=$'\030'}")
             exit
         ;;
@@ -819,49 +280,29 @@ key() {
     esac
 }
 
+# }}}
+
+# Misc Functions {{{
+
 init_vars() {
-    # setting up variables for position within file
-    #
-    # file_column      : Denotes the point at which the element is being modififed
-    # file_line        : Denotes which element in file_data is being modified
-    # terminal_column  : Denotes the COLUMN wise position of the cursor
-    #                    within the terminal
-    # terminal_row     : Denotes the ROW wise position of the cursor
-    #                    within the terminal
-    # prev_line_column : This variable is used to denote the farthest the cursor
-    #                    has been from the right hand side of the terminal. This
-    #                    is used while moving up and down a line.
-    #                    (It gets overwritten when moving left or right)
-    #                    (Used in draw_page)
-    # page_start       : Denotes the file_line value of the line from which a page starts
-    # page_end         : Similar to page_start, page_end denotes the file_line value of the line
-    #                    at the end of the page
-    # mergeable_block  : This variable acts as a flag for adding a new block to the top or merging
-    #                    the action/event to the top block of the undo stack.
-    #                    0 add a new block to the top of stack
-    #                    1 merge with top block
-    # undo_stack       : This array variable holds the undo blocks as a stack
-    # redo_stack       : This array variable holds the redo blocks as a stack
-    # modified         : Acts as a flag to show if the file/buffer has been modified
-    #                    in any way or form
+    file_x=0
+    file_y=0
 
-    file=""
-    file_name=""
+    cur_x=
+    cur_y=
 
-    file_data=( " " )
+    term_x=
+    term_y=
 
-    file_column=0
-    file_line=0
-    terminal_column=1
-    terminal_row=1
+    buff=()
+    buff_lines=
 
-    prev_line_column=0
-
-    page_start=0
-    page_end=$max_lines
-
-    modified=0
+    char_disp_len=
 }
+
+# }}}
+
+# Main Functions {{{
 
 main() {
     [[ $1 == -v ]] && {
@@ -874,18 +315,8 @@ main() {
         read_flags=(-t 0.5)
 
     get_term_size
-    init_vars
+    
 
-    # check validity of passed file
-    check_file "$*"
-
-    file="$*"
-
-    # get the name of the file
-    filename "$*"
-
-    # load file onto array file_data
-    read_file 
 
     # Trap the exit signal (we need to reset the terminal to a useable state.)
     trap 'reset_terminal' EXIT
@@ -894,15 +325,31 @@ main() {
     trap 'get_term_size; redraw' WINCH
     
     setup_terminal
-    redraw
+    #redraw
 
+    mapfile -t A < "/home/sidd-dino/Sandbox/bte_test.txt"
+
+    n=40
+    printf "%s\n" "${A[$n]}"
+    read -rei "${A[$n]}"
+    printf "\n%s\n%d->%d" "$REPLY" "${#A[$n]}" "${#REPLY}"
+    printf "\n|%*s|\n%s\n%s\n%d->%d"\
+           "$((COLUMNS-2))" ""\
+           "${A[$n]}" "$REPLY"\
+           "${#A[$n]}" "${#REPLY}" >> "/home/sidd-dino/Sandbox/bte_test.txt"
+    read -rsn 1
+    
     # Vintage infinite loop.
-    for ((;;)); {
-        read "${read_flags[@]}" -srn 1 && key "$REPLY"
+    #for ((;;)); {
+    #    read "${read_flags[@]}" -srn 1 && key "$REPLY"
 
         # Exit if there is no longer a terminal attached.
-        [[ -t 1 ]] || exit 1
-    }
+    #    [[ -t 1 ]] || exit 1
+    #}
 }
 
+# }}}
+
 main "$@"
+
+# vim: set tabstop=4 shiftwidth=4 expandtab foldmethod=marker:
