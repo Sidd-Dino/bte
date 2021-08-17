@@ -7,7 +7,7 @@
 # bash text editor
 # cos.... Why the fuck not?
 
-# Terminal Functions {{{
+# Terminal Functions
 
 setup_terminal() {
     #* Code yoinked from fff( https://github.com/dylanaraps/fff )
@@ -21,7 +21,7 @@ setup_terminal() {
     printf '\e[?1049h\e[?7l\e[2J\e[1;%sr' "$max_lines"
 
     # Hide echoing of user input
-    #stty -echo
+    stty -echo
 }
 
 reset_terminal() {
@@ -59,31 +59,48 @@ get_term_size() {
     read -r LINES COLUMNS < <(stty size)
 
     # Max list items that fit in the scroll area.
-    ((max_lines=LINES-3))
+    ((max_lines=LINES-2))
 }
 
 get_cursor_pos() {
-    # Usage: get_cursor_pos
-    IFS='[;' read -p $'\e[6n' -d R -rs _ term_y term_x _
+    IFS='[;' read -p $'\e[6n' -d R -rs _ CTy CTx _
 }
 
-get_char_disp_length() {
-    #save cursor
-    printf '\e7\e[%sH\e[2K'\
-            "$LINES"
-    
-    printf "%s" "$1"
-    get_cursor_pos
-    char_disp_length=$((term_x-1))
+get_visual_len() { # [!] Improvements need to be made
+    # A regular charcter class was used instead
+    # of a posix of POSIX bracket expression for
+    # pucntuations and other charcetrs
+    # since
+    # [[:punct:]] would trap emojis (for some reason)
+    # [[:ascii:]] would trap ascii control chars
+    #             like NULL HT VT
+    # Hence I chose to have them hardcoded
+    #
+    # Passing all charcters to have their visual length
+    # measured caused a dramtic drop in performance
+    # it took nearly 1.144s to print a line with 100
+    # ascii chars
+    #
+    case $1 in
+        [[:alnum:]]|\
+        [\!\"#\$%\&\'\(\)\*+\,-./:]|\
+        [\;\<=\>\?@\[\\\]\^_\`\{\|]|\
+        [\}~£×¿®¬½¼¡«»░▒▓│┤©╣║╗╝¢¥]|\
+        [┐└┴┬├─┼╚╔╩╦╠═╬¤┘┌█▄¦▀¯´¬±]|\
+        [‗¾¶§÷¸°¨•¹³²■\ ])
+            _char_v_len=1 ;;
+
+        *)  
+            printf -- '\e7\e[%sH\r\e[K%s' "$LINES" "$1"
+            get_cursor_pos
+            ((_char_v_len=CTx-1))
+            printf '\r\e[K\e8'
+        ;;
+    esac
 }
-
-# }}}
-
-# Display Management Functions {{{
 
 print_ERR_and_die() {
-    #* Thank you whetu
-
+    # Thank you whetu
     # Print error message to stderr
     printf -- '\e[38;5;9m%s\e[m\n'\
               "$1" >&2
@@ -91,218 +108,49 @@ print_ERR_and_die() {
 }
 
 print_line() {
-    
+    local line="${file[$1]}"
+    [[ -z "$line" ]] && return
+
+    local _line_v_len=0
+    local s=0
+    local e=0
+    [[ "$Fy" == "$1" ]] && {
+        s=$Fx
+        while get_visual_len "${line:s:1}" ; do
+            ((_char_v_len + _line_v_len >= Tx)) && break
+            ((_line_v_len += _char_v_len))
+            ((--s < 0)) && break
+        done
+        Tx=$((s==Fx ? _char_v_len : _line_v_len))
+        s=$((s<=0 ? 0 : s+1))
+        e=$((Fx+1))
+    }
+
+    while get_visual_len "${line:e:1}" ; do
+        ((_line_v_len += _char_v_len))
+        ((_line_v_len >= COLUMNS)) && break
+        ((++e >= ${#line})) && break
+    done
+
+    printf '\r\e[K%s' "${line:s:e-s}"
 }
 
 display_buffer() {
-    h=
+    local l
+    page_start=0
+    page_end=$((page_start+max_lines))
+    for((l=page_start;l<page_end;l++)){
+        print_line "$l"
+        ((l+1 < page_end)) && printf '\n'
+    }
 }
 
 reload_screen() {
     clear_screen
-    display_buffer
-    status_screen
-}
-# }}}
-
-# Text Navigation Functions {{{
-
-move_right() {
-    trash=
+    display
+    status
 }
 
-move_left() {
-    trash=
-}
-
-move_up() {
-
-    trash=
-}
-
-move_down() {
-    trash=
-}
-
-# }}}
-
-# Text Modification Functions {{{
-
-insert() {
-    trash=
-}
-
-delete() {
-    trash=
-}
-
-backspace() {
-    trash=
-}
-
-# }}}
-
-# File Handling Functions {{{
-
-# }}}
-
-# UI Functions {{{
-
-key() {
-    local special_keys
-
-    [[ $1 == $'\e' ]] && {
-        special_keys+=${1}
-
-        # \e A
-        # \e [ A
-        # \e [ 6 ~
-        # \e [ 2 0 ~
-        # \e [ 1 ; 5~
-        # \e [ 1 ; 5C
-        # -- - - - --
-        #  1 2 3 4 5
-
-        #* read 2
-        read "${read_flags[@]}" -srn 1
-        special_keys+=${REPLY}
-
-        [[ $REPLY == $'[' ]] && {
-            #* read 3
-            read "${read_flags[@]}" -srn 1
-            special_keys+=${REPLY}
-
-            [[ ${REPLY} == [0-9] ]] && {
-                #* read 4
-                read "${read_flags[@]}" -srn 1
-                special_keys+=${REPLY}
-
-                [[ ${REPLY} == [[:digit:]] ]] && {
-                    read "${read_flags[@]}" -srn 1 _
-                    special_keys+="~"
-                }
-
-                [[ ${REPLY} == ";" ]] && {
-                    read "${read_flags[@]}" -srn 2
-                    special_keys+=${REPLY}
-                }
-            }
-        }
-
-    }
-
-    case "${special_keys:-$1}" in
-
-        # Text Navigation
-        #-=========================================
-
-        # Move Cursor Right
-        # 'C' is what bash sees when the right arrow is pressed
-        # ('\e[C' or '\eOC').
-        "${bte_scroll_right_1:=$'\e[C'}"|\
-        "${bte_scroll_right_2:=$'\eOC'}")
-            move_right
-        ;;
-
-        # Move Cursor Left
-        # 'D' is what bash sees when the left arrow is pressed
-        # ('\e[D' or '\eOD').
-        "${bte_scroll_left_1:=$'\e[D'}"|\
-        "${bte_scroll_left_2:=$'\eOD'}")
-            move_left
-        ;;
-
-        # Scroll up.
-        # 'A' is what bash sees when the up arrow is pressed
-        # ('\e[A' or '\eOA').
-        "${bte_scroll_up_1:=$'\e[A'}"|\
-        "${bte_scroll_up_2:=$'\eOA'}")
-            move_up
-        ;;
-
-        # Scroll down.
-        # 'B' is what bash sees when the down arrow is pressed
-        # ('\e[B' or '\eOB').
-        "${bte_scroll_down_1:=$'\e[B'}"|\
-        "${bte_scroll_down_2:=$'\eOB'}")
-            move_down
-        ;;
-
-        # Text Editing
-        #-=========================================
-
-        # TO instert a newline in the text
-        "${bte_newline_key:=""}")
-        ;;
-
-        # Backspace to remove a character before the cursor
-        "${bte_bckspc_key_1:=$'\b'}"|\
-        "${bte_bckspc_key_2:=$'\177'}")
-        ;;
-
-        # Delete key to remove the character under the cursor
-        "${bte_delete_key:=$'\e[3~'}")
-        ;;
-        
-        # Tab key to add 4 spaces
-        "${bte_tab_key:=$'\t'}")
-        ;;
-
-        # A-Z , a-z , 0-9 and special charcters to insert into
-        # the text
-        [[:alnum:]] |\
-        [[:punct:]] |\
-        " ")
-        ;;
-
-        # Editor Functionality
-        #-=========================================
-
-        "${WRITE_TO_FILE_KEY:=$'\017'}")
-            write_to_file
-            status_line
-        ;;
-
-        # Ctrl+x to quit
-        "${QUIT_KEY:=$'\030'}")
-            exit
-        ;;
-
-        # DEBUG Functionality
-        #-=========================================
-
-        # F5 key to redraw the current screen
-        # Used for debug purposes
-        "${bte_redraw:=$'\E[15~'}")
-            redraw
-        ;;
-
-    esac
-}
-
-# }}}
-
-# Misc Functions {{{
-
-init_vars() {
-    file_x=0
-    file_y=0
-
-    cur_x=
-    cur_y=
-
-    term_x=
-    term_y=
-
-    buff=()
-    buff_lines=
-
-    char_disp_len=
-}
-
-# }}}
-
-# Main Functions {{{
 
 main() {
     [[ $1 == -v ]] && {
@@ -310,46 +158,32 @@ main() {
         exit
     }
 
+    get_term_size
+
     # To stop read from waiting indefinetly for a character input
     ((BASH_VERSINFO[0] > 3)) &&
         read_flags=(-t 0.5)
-
-    get_term_size
-    
-
 
     # Trap the exit signal (we need to reset the terminal to a useable state.)
     trap 'reset_terminal' EXIT
 
     # Trap the window resize signal (handle window resize events).
     trap 'get_term_size; redraw' WINCH
-    
+
     setup_terminal
-    #redraw
+    redraw
 
-    mapfile -t A < "/home/sidd-dino/Sandbox/bte_test.txt"
+    mapfile -t file < "./Makefile"
 
-    n=40
-    printf "%s\n" "${A[$n]}"
-    read -rei "${A[$n]}"
-    printf "\n%s\n%d->%d" "$REPLY" "${#A[$n]}" "${#REPLY}"
-    printf "\n|%*s|\n%s\n%s\n%d->%d"\
-           "$((COLUMNS-2))" ""\
-           "${A[$n]}" "$REPLY"\
-           "${#A[$n]}" "${#REPLY}" >> "/home/sidd-dino/Sandbox/bte_test.txt"
+    Fx=1
+    Fy=3
+    Tx=30
+    Ty=4
+    display_buffer
+    printf '\e[%s;%sH' "$Ty" "$Tx"
     read -rsn 1
-    
-    # Vintage infinite loop.
-    #for ((;;)); {
-    #    read "${read_flags[@]}" -srn 1 && key "$REPLY"
 
-        # Exit if there is no longer a terminal attached.
-    #    [[ -t 1 ]] || exit 1
-    #}
+    exit
 }
 
-# }}}
-
 main "$@"
-
-# vim: set tabstop=4 shiftwidth=4 expandtab foldmethod=marker:
