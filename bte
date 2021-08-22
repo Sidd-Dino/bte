@@ -48,7 +48,7 @@ clear_screen() {
     # '\e[2J':     Clear screen fully (if using tmux) (fixes clear issues).
     # '\e[1;%sr':  Clearing the screen resets the scroll region(?). Re-set it.
     #              Also sets cursor to (0,0).
-    printf '\e[%sH\e[9999C\e[1J%b\e[1;%sr' \
+    printf '\e[%sH\e[9999C\e[2J%b\e[1;%sr' \
            "$((LINES-2))" "${TMUX:+\e[2J}" "$max_lines"
 }
 
@@ -62,11 +62,9 @@ get_term_size() {
     ((max_lines=LINES-2))
 }
 
-get_cursor_pos() {
-    IFS='[;' read -p $'\e[6n' -d R -rs _ CTy CTx _
-}
-
-get_visual_len() { # [!] Improvements need to be made
+get_visual_len() {
+    # [!] Improvements need to be made
+    #
     # A regular charcter class was used instead
     # of a posix of POSIX bracket expression for
     # pucntuations and other charcetrs
@@ -81,7 +79,7 @@ get_visual_len() { # [!] Improvements need to be made
     # it took nearly 1.144s to print a line with 100
     # ascii chars
     #
-    case $1 in
+    case "$1" in
         [[:alnum:]]|\
         [\!\"#\$%\&\'\(\)\*+\,-./:]|\
         [\;\<=\>\?@\[\\\]\^_\`\{\|]|\
@@ -90,100 +88,442 @@ get_visual_len() { # [!] Improvements need to be made
         [‗¾¶§÷¸°¨•¹³²■\ ])
             _char_v_len=1 ;;
 
-        *)  
+        *)
             printf -- '\e7\e[%sH\r\e[K%s' "$LINES" "$1"
-            get_cursor_pos
+            IFS='[;' read -p $'\e[6n' -d R -rs _ CTy CTx _
             ((_char_v_len=CTx-1))
             printf '\r\e[K\e8'
         ;;
     esac
 }
 
-print_ERR_and_die() {
+error_out() {
     # Thank you whetu
     # Print error message to stderr
-    printf -- '\e[38;5;9m%s\e[m\n'\
-              "$1" >&2
+    printf -- '[!] %s\n' "$1" >&2
     exit 1
 }
 
-print_line() {
-    local line="${file[$1]}"
-    [[ -z "$line" ]] && return
 
-    local _line_v_len=0
-    local s=0
-    local e=0
-    [[ "$Fy" == "$1" ]] && {
-        s=$Fx
-        while get_visual_len "${line:s:1}" ; do
-            ((_char_v_len + _line_v_len >= Tx)) && break
-            ((_line_v_len += _char_v_len))
-            ((--s < 0)) && break
+
+draw_line() {
+    # [!] refactoring needed
+    #
+    # clear the damn line properly
+    printf '\e[2K\r'
+
+    # return if buffer[$1] is unset
+    (( ${#buffer[$1]} == 0 )) && { printf '•'; return; }
+
+    # Variable:
+    #          $1 : holds the index of the line draw_line will display
+    #          $2 : holds a flag that determines whether
+    #               LnStart and LnEnd should be ignored while displaying
+    #               the line
+    #
+    #        line : holds a string of the line it will display
+    #        S, E : holds values that determine the start and end
+    #               of the line segement that will be displayed
+    # _line_v_len : holds the visual length of the line segment
+    #        diff : holds the value that determines the direction
+    #               of the offset during the cursor movement portion
+
+    local \
+        line="${buffer[$1]}" disp_line \
+        S=0 E=0 \
+        _line_v_len=0
+
+    # Check to see if the line being displayed
+    # is the same as the one being edited
+    (( By == "$1" )) && {
+        # if the line is empty (has onlly the EOL substitute)
+        # set certain value and return
+        # to skip pointless calculations
+        (( ${#line} == 1 )) && { Tx=1; LnStart=0; LnEnd=1; return; }
+
+        (( Bx <= LnStart )) && LnStart=0
+        (( Bx >= LnEnd )) && LnStart=$((LnEnd-1))
+        ((S=Bx))
+        while get_visual_len "${line:S:1}"; do
+            (( _char_v_len+_line_v_len >= COLUMNS )) && break
+            ((_line_v_len+=_char_v_len))
+            (( --S < LnStart )) && break
         done
-        Tx=$((s==Fx ? _char_v_len : _line_v_len))
-        s=$((s<=0 ? 0 : s+1))
-        e=$((Fx+1))
+        Tx=$(( S == Bx ? _char_v_len : _line_v_len ))
+        S=$(( S <= LnStart ? LnStart : S+1 ))
+        ((E=Bx+1))
     }
 
-    while get_visual_len "${line:e:1}" ; do
-        ((_line_v_len += _char_v_len))
-        ((_line_v_len >= COLUMNS)) && break
-        ((++e >= ${#line})) && break
+    while get_visual_len "${line:E:1}" ; do
+        ((_line_v_len+=_char_v_len))
+        (( _line_v_len >= COLUMNS )) && break
+        (( ++E >= ${#line} )) && break
     done
 
-    printf '\r\e[K%s' "${line:s:e-s}"
+    disp_line="${line:S:E-S+1}"
+    disp_line="${disp_line//$'\t'/$tab_char}"
+
+    printf '%s' "$disp_line"
+    (( E < ${#line} )) && printf '\e[30;41m%s\e[m' ">"
+    (( S > 0 )) && printf '\r\e[30;41m%s\e[m' "<"
+    (( By == "$1" )) && ((LnStart=S,LnEnd=E))
 }
 
-display_buffer() {
-    local l
-    page_start=0
-    page_end=$((page_start+max_lines))
-    for((l=page_start;l<page_end;l++)){
-        print_line "$l"
-        ((l+1 < page_end)) && printf '\n'
+draw_page() {
+    for ((i=PgStart;i<PgEnd;)); do
+        draw_line "$i"
+        (( ++i < PgEnd )) && printf '\n'
+    done
+}
+
+status_line() {
+    printf '\e7\e[%sH\r\e[2K%s%*s\e[%sH\r\e[2K\e8'\
+            "$((LINES-1))"\
+            "[$file_name]"\
+            "$((COLUMNS-${#file_name}-2))" "[$LnStart $LnEnd][T $Ty,$Tx][LS: $LnStart  LE: $LnEnd][Ln $((By+1)), Col $((Bx+1))]"\
+            "$LINES"
+}
+
+sync_cursor() {
+    Ty=$((By-PgStart+1))
+    printf '\e[%s;%sH' "$Ty" "$Tx"
+}
+
+redraw() {
+    clear_screen
+    draw_page
+    sync_cursor
+    status_line
+}
+
+
+
+mv_up() {
+    (( By > 0 )) && {
+        ((Bx=0))
+        draw_line "$By"
+        ((Bx=PrevBx))
+
+        ((By--))
+
+        if (( Ty > 1 )); then
+            printf '\e[A'
+        else
+            printf '\e[1L'
+            ((PgStart--))
+            ((PgEnd--))
+        fi
+
+        ((LnLen=${#buffer[By]}))
+        Bx=$(( Bx>LnLen-1 ? LnLen-1 : Bx ))
+        draw_line "$By"
     }
 }
 
-reload_screen() {
-    clear_screen
-    display
-    status
+mv_down() {
+    (( By+1 < buffer_lines )) && {
+        ((Bx=0))
+        draw_line "$By"
+        ((Bx=PrevBx))
+
+        ((By++))
+
+        if (( Ty < max_lines )); then
+            printf '\e[B'
+        else
+            printf '\n'
+            ((PgStart++))
+            ((PgEnd++))
+        fi
+
+        ((LnLen=${#buffer[By]}))
+        Bx=$((Bx>LnLen-1 ? LnLen-1 : Bx))
+        draw_line "$By"
+    }
+}
+
+mv_right() {
+    if (( Bx+1 < ${#buffer[By]} )); then
+        ((Bx++))
+        ((PrevBx=Bx))
+        draw_line "$By"
+    elif (( By != buffer_lines-1 )); then
+        ((Bx=0))
+        ((PrevBx=Bx))
+        mv_down
+    fi
+}
+
+mv_left() {
+    if (( Bx > 0 )); then
+        ((Bx--))
+        ((PrevBx=Bx))
+        draw_line "$By"
+    elif (( By != 0 )); then
+        ((Bx=${#buffer[By-1]}-1))
+        ((PrevBx=Bx))
+        mv_up
+    fi
+}
+
+home() {
+    Bx=$((PrevBx=0))
+    draw_line "$By"
+}
+
+end() {
+    Bx=$((PrevBx=${#buffer[By]}-1))
+    draw_line "$By"
+}
+
+pg_up() {
+    (( PgStart == 0 )) && return
+    ((Bx=0, PrevBx=0))
+    local OldPgEnd=$PgEnd
+    PgStart=$((PgStart-max_lines > 0 ? PgStart-max_lines : 0))
+    PgEnd=$((PgStart+max_lines))
+    (( By > PgEnd )) && By=$((PgEnd-OldPgEnd+By))
+    redraw
+}
+
+pg_down() {
+    (( PgEnd >= buffer_lines )) && return
+    local OldPgStart=$PgStart
+    ((Bx=0, PrevBx=0))
+    PgStart=$(( PgStart+max_lines >= buffer_lines ? PgStart : PgStart+max_lines))
+    PgEnd=$((PgStart+max_lines))
+    (( By < PgStart )) && By=$((PgStart-OldPgStart+By))
+    redraw
 }
 
 
+
+delete() {
+    # remove whatever is at By,Bx
+    buffer[By]="${buffer[By]::Bx}${buffer[By]:Bx+1}"
+    ((PrevBx=Bx))
+
+    # if the EOL substitute gets deleted
+    # append the next line to the current one
+    # and shift lines up
+    # When the lines buffer[By] and buffer[By+1]
+    # are joined. The last characetr in buffer[By+1] is
+    # ignored, the EOL sub. An EOL is manually added instead.
+    # This is to prevent problems occuring when using
+    # delete at the end of the last line.
+    (( Bx == ${#buffer[By]} )) && {
+        buffer=( "${buffer[@]::By}" \
+                 "${buffer[By]}${buffer[By+1]::-1} " \
+                 "${buffer[@]:By+2}" )
+        ((buffer_lines=${#buffer[@]}))
+
+        for ((i=By;i<PgEnd;)); do
+            draw_line "$i"
+            (( ++i < PgEnd )) && printf '\n'
+        done
+
+        return
+    }
+
+    draw_line "$By"
+}
+
+backspace() {
+    # during the split
+    # no matter what value Bx holds, the EOF substitute
+    # > is never in part1
+    # > is always in part2
+    local part1="${buffer[By]:: Bx-1}" \
+          part2="${buffer[By]:Bx}"
+
+    # if used at the start of a line
+    (( Bx == 0 )) && {
+        # do nothing if at 0,0 in buffer
+        (( By == 0 )) && return
+
+        ((By--))
+        ((Bx=${#buffer[By]}-1))
+        ((PrevBx=Bx))
+        buffer=( "${buffer[@]::By}" \
+                 "${buffer[By]::-1}$part1 " \
+                 "${buffer[@]:By+2}" )
+        ((buffer_lines=${#buffer[@]}))
+
+        printf '\e[A'
+        for ((i=By;i<PgEnd;)); do
+            draw_line "$i"
+            (( ++i < PgEnd )) && printf '\n'
+        done
+
+        return
+    }
+
+    # if used anywhere else
+    buffer[By]="$part1$part2"
+    ((Bx--))
+    ((PrevBx--))
+    draw_line "$By"
+}
+
+tab() {
+    # the tab fucntion is seperate from the insert
+    # function since it needs to process the passed value
+    # and on of the passed values is Z
+    # Diffrentiating between
+    # Z(meant as a tab) and Z(meant as a character)
+    # would require a few pointless things to keep track of
+    # hence another fucntion
+    local tab="    "
+    [[ $1 == Z ]] && tab=$'\t'
+    buffer[By]="${buffer[By]:: Bx}$tab${buffer[By]:Bx}"
+    ((Bx+=${#tab}))
+    ((PrevBx=Bx))
+    draw_line "$By"
+}
+
+newline() {
+    buffer=( "${buffer[@]::By}"
+             "${buffer[By]::Bx} "
+             "${buffer[By]:Bx}"
+             "${buffer[@]:By+1}" )
+
+    ((By++, Bx=0, PrevBx=0, buffer_lines++))
+
+    printf '\e[1L'
+    draw_line "$((By-1))"
+    printf '\n'
+    draw_line "$By"
+     (( Ty == max_lines )) && ((PgStart++, PgEnd++))
+}
+
+insert() {
+    buffer[By]="${buffer[By]::Bx}$1${buffer[By]:Bx}"
+    ((Bx++, PrevBx=Bx))
+    draw_line "$By"
+}
+
+
+
+handle_file() {
+    file_path="$*"
+    file_name="${1##*/}"
+
+    [[ -d "$file_path" ]] && error_out "$file_path is a directory"
+    [[ ! -r "$file_path" ]] && error_out "$file_path can't be read"
+    [[ ! -w "$file_path" ]] && mode=2
+
+    [[ -b "$file_path" || -c "$file_path" ||\
+       -p "$file_path" || -S "$file_path" ]] && \
+        error_out "bte cant handle $file_path"
+
+    mapfile -t buffer < "$file_path"
+
+    ((buffer_lines=${#buffer[*]}))
+    ((buffer_lines)) || buffer=( "" )
+
+    # an empty charcter is added at the end of
+    # the line to act as a substitute for an
+    # EOL character
+    local i
+    for((i=0;i<buffer_lines;i++)){
+        buffer[$i]+=" "
+    }
+}
+
+
+
+setup_bte() {
+    Tx=1 Ty=1
+
+    get_visual_len $'\t'
+    printf -v tab_char '%*s' "$_char_v_len" ""
+
+    file_path=
+    file_name=
+    buffer=()
+    buffer_lines=0
+    Bx=0 By=0
+    PrevBx=0
+    OldPgSize=0
+    PgStart=0 PgEnd=$max_lines
+    LnStart=0 LnEnd=$COLUMNS
+}
+
+dump() {
+    local line="${buffer[By]}"
+    get_visual_len "${line:LnStart:Bx-LnStart+1}"
+    {
+        printf -- '---------------\n'
+        printf 'Tx: %s; Ty: %s\n' "$Tx" "$Ty"
+        printf 'Bx: %s; By: %s\n' "$Bx" "$By"
+        printf 'LS: %s; LE: %s\n' "$LnStart" "$LnEnd"
+        printf 'Raw: %s\n' "${line:LnStart:LnEnd-LnStart+1}"
+        printf 'Till Bx' "${line:LnStart:Bx-LnStart+1}"
+    } >> log
+}
+
 main() {
-    [[ $1 == -v ]] && {
-        printf '%s\n' "BTE 0.1"
+    [[ $1 == '-v' ]] && {
+        printf '%s\n' 'BTE (dev)'
         exit
     }
 
     get_term_size
+    setup_bte
+    handle_file "$*"
 
     # To stop read from waiting indefinetly for a character input
     ((BASH_VERSINFO[0] > 3)) &&
         read_flags=(-t 0.5)
 
-    # Trap the exit signal (we need to reset the terminal to a useable state.)
-    trap 'reset_terminal' EXIT
-
-    # Trap the window resize signal (handle window resize events).
-    trap 'get_term_size; redraw' WINCH
+    trap 'reset_terminal' EXIT          # reset the terminal on exit
+    trap 'get_term_size; redraw' WINCH  # handle window resize events
 
     setup_terminal
     redraw
 
-    mapfile -t file < "./Makefile"
+    local func sk k
+    while read -rsn 1; do
+        k="$REPLY"
+        case "$sk$k${esc:=0}" in
+            A2) func=mv_up      ;;
+            B2) func=mv_down    ;;
+            C2) func=mv_right   ;;
+            D2) func=mv_left    ;;
+            F2) func=end        ;;
+            H2) func=home       ;;
 
-    Fx=1
-    Fy=3
-    Tx=30
-    Ty=4
-    display_buffer
-    printf '\e[%s;%sH' "$Ty" "$Tx"
-    read -rsn 1
 
-    exit
+            '5~2') func=pg_up   ;;
+            '6~2') func=pg_down ;;
+
+            '3~2') func=delete  ;;
+            $'\b'0|\
+            $'\177'0) func=backspace ;;
+            $'\t'0|Z2) func=tab ;;
+
+            0) func=newline ;;
+
+            [[:alnum:]]0|\
+            [[:punct:]]0|\
+            \ 0)
+                func=insert
+            ;;
+
+            d1) func=dump ;;
+
+            $'\e'*) esc=1 ;;
+              '[1') esc=2 ;;
+                 *) sk+="$k" ;;
+        esac
+        #printf 'f:%s k:%q sk:%q esc:%s\n' "$func" "$k" "$sk" "$esc" >> log
+        [[ -n "$func" ]] && { "$func" "$k"; func= ; esc=0; sk= ; }
+        sync_cursor
+        status_line
+        [[ -t 1 ]] || exit 1
+    done
 }
 
 main "$@"
+
+
