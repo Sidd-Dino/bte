@@ -7,8 +7,6 @@
 # bash text editor
 # cos.... Why the fuck not?
 
-# Terminal Functions
-
 setup_terminal() {
     #* Code yoinked from fff( https://github.com/dylanaraps/fff )
     # Setup the terminal for the TUI.
@@ -80,30 +78,50 @@ get_visual_len() {
     # ascii chars
     #
     case "$1" in
-        [[:alnum:]]|\
         [\!\"#\$%\&\'\(\)\*+\,-./:]|\
         [\;\<=\>\?@\[\\\]\^_\`\{\|]|\
         [\}~£×¿®¬½¼¡«»░▒▓│┤©╣║╗╝¢¥]|\
         [┐└┴┬├─┼╚╔╩╦╠═╬¤┘┌█▄¦▀¯´¬±]|\
-        [‗¾¶§÷¸°¨•¹³²■\ ])
-            _char_v_len=1 ;;
+        [‗¾¶§÷¸°¨•¹³²■\ ]|\
+        $'\e')
+            _char_v_len=1
+        ;;
+
+        $'\t')
+            [[ -v BTE_TAB_LEN ]] && {
+                _char_v_len=$BTE_TAB_LEN
+                return
+            }
+        ;;&
 
         *)
-            printf -- '\e7\e[%sH\r\e[K%s' "$LINES" "$1"
-            IFS='[;' read -p $'\e[6n' -d R -rs _ CTy CTx _
-            ((_char_v_len=CTx-1))
-            printf '\r\e[K\e8'
+            [[ "${!vlen[*]}" != *"<$1>"* ]] && {
+                printf '\e7\e[%sH\r\e[K%s' "$LINES" "$1"
+                IFS='[;' read -p $'\e[6n' -d R -rs _ CTy CTx _
+                printf '\r\e[K\e8'
+
+                vlen["<$1>"]=$((CTx-1))
+            }
+
+            _char_v_len=${vlen["<$1>"]}
         ;;
     esac
 }
 
-error_out() {
+cli_error() {
     # Thank you whetu
     # Print error message to stderr
     printf -- '[!] %s\n' "$1" >&2
     exit 1
 }
 
+tui_error() {
+    printf -- '\e[%sH\r\e[2K\e[3%s;4%sm[!] %s\e[m' \
+            "$LINES" \
+            "0" "1" \
+            "$1"
+    read -rt "2.5" <> <(:) || :
+}
 
 
 draw_line() {
@@ -113,7 +131,7 @@ draw_line() {
     printf '\e[2K\r'
 
     # return if buffer[$1] is unset
-    (( ${#buffer[$1]} == 0 )) && { printf '•'; return; }
+    (( ${#buffer[$1]} == 0 )) && { printf '\e[2m~\e[m'; return; }
 
     # Variable:
     #          $1 : holds the index of the line draw_line will display
@@ -160,16 +178,28 @@ draw_line() {
         (( ++E >= ${#line} )) && break
     done
 
+    # make certain special charcters easy to render
     disp_line="${line:S:E-S+1}"
-    disp_line="${disp_line//$'\t'/$tab_char}"
+    disp_line="${disp_line//$'\t'/$expanded_tab}"
+    disp_line="${disp_line//$'\e'/$'\e[7mE\e[m'}"
 
+    # display the line
     printf '%s' "$disp_line"
+
     (( E < ${#line} )) && printf '\e[30;41m%s\e[m' ">"
     (( S > 0 )) && printf '\r\e[30;41m%s\e[m' "<"
-    (( By == "$1" )) && ((LnStart=S,LnEnd=E))
+    (( By == "$1" )) && ((LnStart=S, LnEnd=E))
 }
 
 draw_page() {
+    local old_max_lines=$((PgEnd-PgStart))
+    local diff=$((max_lines-old_max_lines))
+
+    ((PgEnd+=diff))
+
+    (( By >= PgEnd )) && PgEnd=$((By+1))
+    ((PgStart=PgEnd-max_lines))
+
     for ((i=PgStart;i<PgEnd;)); do
         draw_line "$i"
         (( ++i < PgEnd )) && printf '\n'
@@ -177,10 +207,25 @@ draw_page() {
 }
 
 status_line() {
-    printf '\e7\e[%sH\r\e[2K%s%*s\e[%sH\r\e[2K\e8'\
+    local left="${file_name:-new_buffer}" \
+          right="$((By+1)),$((Bx+1))" \
+          key
+
+    # left side
+    (( modified )) && left+=" [+]"
+    case $mode in
+        2) left+="[RO]" ;;
+        3) left+="[PASTE]" ;;
+    esac
+
+    # right side
+    (( esc == 1 )) && key+=$'\e'
+    (( esc == 2 )) && key+='['
+    printf -v right '%q %s' "$key$sk" "$right"
+
+    printf '\e7\e[%sH%s%*s\e[%sH\e[2K\e8'\
             "$((LINES-1))"\
-            "[$file_name]"\
-            "$((COLUMNS-${#file_name}-2))" "[$LnStart $LnEnd][T $Ty,$Tx][LS: $LnStart  LE: $LnEnd][Ln $((By+1)), Col $((Bx+1))]"\
+            "$left" "$((COLUMNS-${#left}))" "$right"\
             "$LINES"
 }
 
@@ -282,7 +327,7 @@ pg_up() {
     local OldPgEnd=$PgEnd
     PgStart=$((PgStart-max_lines > 0 ? PgStart-max_lines : 0))
     PgEnd=$((PgStart+max_lines))
-    (( By > PgEnd )) && By=$((PgEnd-OldPgEnd+By))
+    (( By >= PgEnd )) && By=$((PgEnd-OldPgEnd+By))
     redraw
 }
 
@@ -290,9 +335,11 @@ pg_down() {
     (( PgEnd >= buffer_lines )) && return
     local OldPgStart=$PgStart
     ((Bx=0, PrevBx=0))
-    PgStart=$(( PgStart+max_lines >= buffer_lines ? PgStart : PgStart+max_lines))
+    PgStart=$(( PgStart+max_lines >= buffer_lines ?
+                PgStart : PgStart+max_lines))
     PgEnd=$((PgStart+max_lines))
     (( By < PgStart )) && By=$((PgStart-OldPgStart+By))
+    (( By >= buffer_lines )) && By=$((buffer_lines-1))
     redraw
 }
 
@@ -326,6 +373,8 @@ delete() {
     }
 
     draw_line "$By"
+
+    ((modified=1))
 }
 
 backspace() {
@@ -363,6 +412,8 @@ backspace() {
     ((Bx--))
     ((PrevBx--))
     draw_line "$By"
+
+    ((modified=1))
 }
 
 tab() {
@@ -373,70 +424,279 @@ tab() {
     # Z(meant as a tab) and Z(meant as a character)
     # would require a few pointless things to keep track of
     # hence another fucntion
-    local tab="    "
+    local tab="$expanded_tab"
     [[ $1 == Z ]] && tab=$'\t'
     buffer[By]="${buffer[By]:: Bx}$tab${buffer[By]:Bx}"
     ((Bx+=${#tab}))
     ((PrevBx=Bx))
     draw_line "$By"
+
+    ((modified=1))
 }
 
 newline() {
+    # break the line into two at By,Bx
     buffer=( "${buffer[@]::By}"
              "${buffer[By]::Bx} "
              "${buffer[By]:Bx}"
              "${buffer[@]:By+1}" )
 
     ((By++, Bx=0, PrevBx=0, buffer_lines++))
+    (( Ty == max_lines )) && ((PgStart++, PgEnd++))
 
     printf '\e[1L'
     draw_line "$((By-1))"
     printf '\n'
     draw_line "$By"
-     (( Ty == max_lines )) && ((PgStart++, PgEnd++))
+
+    ((modified=1))
 }
 
 insert() {
     buffer[By]="${buffer[By]::Bx}$1${buffer[By]:Bx}"
     ((Bx++, PrevBx=Bx))
     draw_line "$By"
+
+    ((modified=1))
 }
 
+paste_mode() {
+    clear_screen
+    printf '\e[1;1H%s'
+    mapfile -t paste_input
+}
 
 
 handle_file() {
     file_path="$*"
     file_name="${1##*/}"
 
-    [[ -d "$file_path" ]] && error_out "$file_path is a directory"
-    [[ ! -r "$file_path" ]] && error_out "$file_path can't be read"
-    [[ ! -w "$file_path" ]] && mode=2
+    [[ -a "$file_path" ]] && {
+        [[ -d "$file_path" ]] && cli_error "$file_path is a directory"
+        [[ ! -r "$file_path" ]] && cli_error "$file_path can't be read"
+        [[ ! -w "$file_path" ]] && mode=2
 
-    [[ -b "$file_path" || -c "$file_path" ||\
-       -p "$file_path" || -S "$file_path" ]] && \
-        error_out "bte cant handle $file_path"
+        [[ -b "$file_path" || -c "$file_path" ||\
+           -p "$file_path" || -S "$file_path" ]] && \
+            cli_error "bte cant handle $file_path"
 
-    mapfile -t buffer < "$file_path"
+        mapfile -t buffer < "$file_path"
+    }
 
-    ((buffer_lines=${#buffer[*]}))
-    ((buffer_lines)) || buffer=( "" )
+    buffer_lines=$(( ${#buffer[*]} == 0 ? 1 : ${#buffer[*]} ))
 
     # an empty charcter is added at the end of
     # the line to act as a substitute for an
     # EOL character
     local i
     for((i=0;i<buffer_lines;i++)){
-        buffer[$i]+=" "
+        buffer[$i]="${buffer[i]} "
     }
 }
 
+write_to_file() {
+    local input="$file_path"
 
+    printf '\e7\e[%sH' "$LINES"
+
+
+    while :; do
+        [[ -f "$input" ]] && type=' F '
+        [[ -d "$input" ]] && type=' D '
+        [[ -a "$input" ]] || type=' N '
+
+        IFS= read -rsn 1 -p $'\r\e[K'"[$type] $input" rin
+        case $rin in
+            $'\177'|$'\b')
+                input="${input%?}"
+                unset c comp
+            ;;
+
+            $'\t')
+                [[ -z ${comp[0]} ]] && {
+                    set -- "$input"*
+                    comp=( "$@" )
+                }
+
+                [[ -n ${comp[c]} ]] && {
+                    input=${comp[c]}
+                    ((c=c >= ${#comp[@]}-1 ? 0 : ++c))
+                }
+
+                [[ -d "$input" ]] && {
+                    (( ${#comp[@]}==1 )) && {
+                        input+='/'
+                        unset c comp
+                    }
+                }
+            ;;
+
+            $'\e')
+                break
+            ;;
+
+            "~")
+                input+=$HOME
+            ;;
+
+            "")
+                { :>"$input" ; } &>/dev/null && {
+                    for ln in "${buffer[@]}"; do
+                        printf -- '%s\n' "${ln%?}" >> "$input"
+                    done
+
+                    file_path="$input"
+                    file_name="${input##*/}"
+
+                    modified=0
+
+                    break
+                }
+
+                tui_error "Unable to write to file"
+            ;;
+
+            *)
+                input+=$rin
+                unset c comp
+            ;;
+        esac
+    done
+
+    unset c comp
+
+    printf '\e[2K\e8'
+}
+
+dbug() { declare -p vlen >> log ; }
+quit() { exit ; }
+
+key() {
+
+    #  variable primarily used during input proccessing
+    #  $1  : holds the latest character read from stdin
+    #  sk  : holds all the charters that come after an
+    #        escape charcter and 
+    #  esc : holds a numerical representaion of certain
+    #        escape charcter formats
+    #          \e  : 1
+    #          \e[ : 2
+    #
+    #  |  Input  | esc |  sk  |    $1     |
+    #  | \eA     | \e  |      |     A     |
+    #  | \e[A    | \e  |      |     A     |
+    #  | \e[6~   | \e[ | 6    |     ~     |
+    #  | \e[20~  | \e[ | 20   |     ~     |
+    #  | \e[1;5~ | \e[ | 1;5  |     ~     |
+    #  | \e[1;5C | \e[ | 1;5  |     C     |
+
+    local func
+
+    case "$sk$1$esc$mode" in
+        ${BTE_KEY_SCROLL_UP1:=k02}|\
+        ${BTE_KEY_SCROLL_UP2:=A2?}|\
+        ${BTE_KEY_SCROLL_UP3:=OA1?})    func=mv_up    ;;
+
+        ${BTE_KEY_SCROLL_DOWN1:=j02}|\
+        ${BTE_KEY_SCROLL_DOWN2:=B2?}|\
+        ${BTE_KEY_SCROLL_DOWN3:=OB1?})  func=mv_down  ;;
+
+        ${BTE_KEY_SCROLL_RIGHT1:=l02}|\
+        ${BTE_KEY_SCROLL_RIGHT2:=C2?}|\
+        ${BTE_KEY_SCROLL_RIGHT3:=OC1?}) func=mv_right ;;
+
+        ${BTE_KEY_SCROLL_LEFT1:=h02}|\
+        ${BTE_KEY_SCROLL_LEFT2:=D2?}|\
+        ${BTE_KEY_SCROLL_LEFT3:=OD1?})  func=mv_left  ;;
+
+        ${BTE_KEY_LINE_END1:=F2?}|\
+        ${BTE_KEY_LINE_END2:=4~2?})     func=end    ;; # go to end of line
+        ${BTE_KEY_LINE_HOME1:=H2?}|\
+        ${BTE_KEY_LINE_HOME2:=1~2?})    func=home   ;; # go to start of line
+
+        ${BTE_KEY_PG_UP:=5~2?})         func=pg_up   ;; # go up a page
+        ${BTE_KEY_PG_DOWN:=6~2?})       func=pg_down ;; # go down a page
+
+        P21|3~21)       func=delete     ;;  # remove a character before the
+                                            # cursor
+        $'\b'01|\
+        $'\177'01)      func=backspace  ;;  # remove the character at the
+                                            # cursor
+
+        $'\t'01|Z21)    func=tab        ;;  # insert spaces on tab
+                                            # and the literal tab character on
+                                            # shift+tab
+
+        01)             func=newline    ;;  # break the current line at cursor
+                                            # on enter
+        [[:alnum:]]01|\
+        [[:punct:]]01|\
+        \ 01)           func=insert     ;;  # insert a character before the
+                                            # cursor
+
+        p1?) func=paste_mode    ;;  # paste mode
+        w1?) func=write_to_file ;;  # write buffer to file
+        r1?) func=redraw        ;;  # redraw the screen
+        q1?) func=quit          ;;  # quit bte
+
+        D1?) func=dbug          ;;  # debug function
+
+        # handle esacape charcters
+        $'\e'*) esc=1 ;;
+         '[1'*) esc=2 ;;
+             *) sk+="$1" ;;
+    esac
+
+    # if func has been assigned a function name
+    # call the fucntion stored in func with k as it's argument
+    [[ -n "$func" ]] && { "$func" "$1"; func= ; esc=0; sk= ; }
+
+    # set the default values of esc and sk if $1 is an
+    # enter has been passed
+    [[ "$1" == '' ]] && { esc=0; sk= ; }
+
+    sync_cursor
+    status_line
+}
 
 setup_bte() {
+    # Tx Ty        : Terminal x and y position
+    # vlen         : An associative array that has charcters
+    #                associated to their respective vlen
+    # tab_len      : holds the display length of \t to
+    #                have the length of exapnded tab and \t
+    #                be visually customisable
+    # tab_char     : acts as a visual replacement for
+    #                \t when being printed
+    # mode         : defines the mode bte is in
+    #                availablle mode :
+    #                 1    read and write mode
+    #                 2    read only mode
+    # modified     : a simple flag that shows if the file has
+    #                modified
+    # file_path    : holds the path of the file in buffer
+    # file_name    : holds the name of the file in buffer
+    # buffer       : holds the content of the file passed
+    #                or will be empty if no file passed
+    # buffer_lines : the number of lines in buffer
+    #                an empty buffer will always have
+    #                to start from
+    # Bx, By       : position in buffer where the edits get carried out
+    # PrevBx       : mainly used during navigation of buffer vertically
+    #                to make it a bit user friendly
+
     Tx=1 Ty=1
 
+    declare -gA vlen
+
     get_visual_len $'\t'
-    printf -v tab_char '%*s' "$_char_v_len" ""
+    printf -v expanded_tab "%${_char_v_len}s"
+
+    mode=1
+    sk=
+    esc=0
+
+    modified=0
 
     file_path=
     file_name=
@@ -444,23 +704,10 @@ setup_bte() {
     buffer_lines=0
     Bx=0 By=0
     PrevBx=0
-    OldPgSize=0
     PgStart=0 PgEnd=$max_lines
     LnStart=0 LnEnd=$COLUMNS
 }
 
-dump() {
-    local line="${buffer[By]}"
-    get_visual_len "${line:LnStart:Bx-LnStart+1}"
-    {
-        printf -- '---------------\n'
-        printf 'Tx: %s; Ty: %s\n' "$Tx" "$Ty"
-        printf 'Bx: %s; By: %s\n' "$Bx" "$By"
-        printf 'LS: %s; LE: %s\n' "$LnStart" "$LnEnd"
-        printf 'Raw: %s\n' "${line:LnStart:LnEnd-LnStart+1}"
-        printf 'Till Bx' "${line:LnStart:Bx-LnStart+1}"
-    } >> log
-}
 
 main() {
     [[ $1 == '-v' ]] && {
@@ -477,53 +724,18 @@ main() {
         read_flags=(-t 0.5)
 
     trap 'reset_terminal' EXIT          # reset the terminal on exit
+    trap 'exit' INT
     trap 'get_term_size; redraw' WINCH  # handle window resize events
 
     setup_terminal
     redraw
 
-    local func sk k
-    while read -rsn 1; do
-        k="$REPLY"
-        case "$sk$k${esc:=0}" in
-            A2) func=mv_up      ;;
-            B2) func=mv_down    ;;
-            C2) func=mv_right   ;;
-            D2) func=mv_left    ;;
-            F2) func=end        ;;
-            H2) func=home       ;;
+    for ((;;)) {
+        read "${read_flags[@]}" -rsn 1 && key "$REPLY"
 
-
-            '5~2') func=pg_up   ;;
-            '6~2') func=pg_down ;;
-
-            '3~2') func=delete  ;;
-            $'\b'0|\
-            $'\177'0) func=backspace ;;
-            $'\t'0|Z2) func=tab ;;
-
-            0) func=newline ;;
-
-            [[:alnum:]]0|\
-            [[:punct:]]0|\
-            \ 0)
-                func=insert
-            ;;
-
-            d1) func=dump ;;
-
-            $'\e'*) esc=1 ;;
-              '[1') esc=2 ;;
-                 *) sk+="$k" ;;
-        esac
-        #printf 'f:%s k:%q sk:%q esc:%s\n' "$func" "$k" "$sk" "$esc" >> log
-        [[ -n "$func" ]] && { "$func" "$k"; func= ; esc=0; sk= ; }
-        sync_cursor
-        status_line
+        # Exit if there is no longer a terminal attached
         [[ -t 1 ]] || exit 1
-    done
+    }
 }
 
 main "$@"
-
-
